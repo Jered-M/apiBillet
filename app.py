@@ -237,6 +237,23 @@ def predict():
         predicted_class = np.argmax(predictions[0])
         confidence = float(predictions[0][predicted_class])
         
+        # Afficher toutes les prédictions pour déboguer
+        logger.info("📊 Toutes les prédictions:")
+        for idx, prob in enumerate(predictions[0]):
+            label = BILL_LABELS.get(idx, f"Classe {idx}")
+            logger.info(f"   {label}: {float(prob):.2%}")
+        
+        # Vérifier le seuil de confiance (minimum 50%)
+        MIN_CONFIDENCE = 0.50
+        if confidence < MIN_CONFIDENCE:
+            logger.warning(f"⚠️ Confiance trop basse: {confidence:.2%} < {MIN_CONFIDENCE:.0%}")
+            os.remove(filepath)
+            return jsonify({
+                'error': f'Image peu claire - Confiance: {confidence:.2%}',
+                'confidence': confidence,
+                'top_guess': BILL_LABELS.get(predicted_class, "Inconnu")
+            }), 400
+        
         # Obtenir le label
         bill_label = BILL_LABELS.get(predicted_class, f"Billet inconnu (classe {predicted_class})")
         
@@ -292,10 +309,18 @@ def model_info():
 if __name__ == '__main__':
     logger.info("Démarrage de l'API Bill Recognition...")
     load_model_on_startup()
-    # Ne pas utiliser debug=True en production (cause des redémarrages)
+    
+    # Force la désactivation du debug mode
+    os.environ['FLASK_ENV'] = 'production'
+    os.environ['FLASK_DEBUG'] = '0'
+    
+    port = int(os.environ.get('PORT', 5000))
+    logger.info(f"🚀 Démarrage sur le port {port} en mode production")
+    
     app.run(
         host='0.0.0.0',
-        port=int(os.environ.get('PORT', 5000)),
+        port=port,
         debug=False,
+        use_reloader=False,
         threaded=True
     )
