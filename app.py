@@ -53,12 +53,12 @@ BILL_LABELS = {
     3: "20 USD",
     4: "50 USD",
     5: "100 USD",
-    6: "500 CDF",
-    7: "1000 CDF",
-    8: "5000 CDF",
-    9: "10000 CDF",
-    10: "20000 CDF",
-    11: "50000 CDF",
+    6: "50 CDF",
+    7: "100 CDF",
+    8: "500 CDF",
+    9: "1000 CDF",
+    10: "5000 CDF",
+    11: "20000 CDF",
 }
 
 def load_model_on_startup():
