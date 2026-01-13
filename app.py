@@ -293,9 +293,8 @@ if __name__ == '__main__':
     logger.info("Démarrage de l'API Bill Recognition...")
     load_model_on_startup()
     app.run(
-        host='0.0.0.0',  # Accessible depuis n'importe quelle machine du réseau
+        host='0.0.0.0',
         port=5000,
         debug=True,
-        threaded=True,
-        timeout=300  # 5 minutes pour les requêtes longues
+        threaded=True
     )
