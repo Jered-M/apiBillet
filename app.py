@@ -1,0 +1,242 @@
+import os
+import numpy as np
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
+from PIL import Image
+import io
+import base64
+from io import BytesIO
+import tensorflow as tf
+from keras.models import load_model
+import logging
+
+# Configuration
+app = Flask(__name__)
+CORS(app)  # Activer CORS pour toutes les routes
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max au cas où
+app.config['UPLOAD_FOLDER'] = 'uploads'
+
+# Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Créer le dossier uploads
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
+# Variables globales pour le modèle
+MODEL = None
+MODEL_LOADED = False
+
+# Dictionnaire de mapping des classes aux billets
+# USD et CDF (Franc Congolais)
+BILL_LABELS = {
+    0: "1 USD",
+    1: "5 USD",
+    2: "10 USD",
+    3: "20 USD",
+    4: "50 USD",
+    5: "100 USD",
+    6: "500 CDF",
+    7: "1000 CDF",
+    8: "5000 CDF",
+    9: "10000 CDF",
+    10: "20000 CDF",
+    11: "50000 CDF",
+}
+
+def load_model_on_startup():
+    """Charge le modèle au démarrage"""
+    global MODEL, MODEL_LOADED
+    try:
+        # Chemin absolu vers le modèle
+        model_path = r'C:\Users\HP\Pictures\ML\my_banknote_model.h5'
+        
+        # Si le fichier n'existe pas au chemin par défaut, chercher dans le dossier courant
+        if not os.path.exists(model_path):
+            model_path = 'my_banknote_model.h5'
+        
+        if not os.path.exists(model_path):
+            logger.error(f"Modèle non trouvé à {model_path}")
+            logger.info("⚠️  Le modèle sera chargé dynamiquement lors du premier appel")
+            return False
+        
+        logger.info(f"Chargement du modèle depuis: {model_path}")
+        MODEL = load_model(model_path)
+        MODEL_LOADED = True
+        logger.info("✓ Modèle chargé avec succès")
+        return True
+    except Exception as e:
+        logger.error(f"Erreur lors du chargement du modèle: {str(e)}")
+        return False
+
+def preprocess_image(image_path, target_size=(224, 224)):
+    """Prétraite l'image pour le modèle"""
+    try:
+        img = Image.open(image_path).convert('RGB')
+        img = img.resize(target_size)
+        img_array = np.array(img) / 255.0  # Normaliser entre 0 et 1
+        img_array = np.expand_dims(img_array, axis=0)  # Ajouter dimension batch
+        return img_array
+    except Exception as e:
+        logger.error(f"Erreur prétraitement image: {str(e)}")
+        raise
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Endpoint de vérification de santé"""
+    logger.info("✓ Health check reçu")
+    return jsonify({
+        'status': 'ok',
+        'model_loaded': MODEL_LOADED,
+        'message': 'API Bill Recognition prête',
+        'max_content_length': app.config['MAX_CONTENT_LENGTH']
+    }), 200
+
+@app.route('/test-upload', methods=['POST'])
+def test_upload():
+    """Endpoint de test pour vérifier les uploads"""
+    logger.info("=== TEST UPLOAD ===")
+    logger.info(f"Content-Length: {request.content_length}")
+    logger.info(f"Content-Type: {request.content_type}")
+    
+    if 'file' in request.files:
+        file = request.files['file']
+        logger.info(f"✓ Fichier reçu: {file.filename}")
+        return jsonify({
+            'status': 'ok',
+            'filename': file.filename,
+            'size': request.content_length
+        }), 200
+    else:
+        logger.warning("✗ Pas de fichier reçu")
+        return jsonify({'error': 'Pas de fichier'}), 400
+    return jsonify({
+        'status': 'ok',
+        'model_loaded': MODEL_LOADED,
+        'message': 'API Bill Recognition prête'
+    }), 200
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    """
+    Endpoint pour prédire le billet
+    Attendu: Image multipart/form-data avec clé 'file'
+    Retour: { "result": "100 USD", "confidence": 0.95 }
+    """
+    try:
+        logger.info("=" * 50)
+        logger.info("🚀 NOUVELLE REQUÊTE /predict")
+        logger.info("=" * 50)
+        logger.info(f"📋 Content-Type: {request.content_type}")
+        logger.info(f"📊 Content-Length: {request.content_length} bytes")
+        
+        # Vérifier la présence du fichier
+        if 'file' not in request.files:
+            logger.error("❌ Aucun fichier 'file' trouvé dans la requête")
+            logger.error(f"   Fichiers présents: {list(request.files.keys())}")
+            return jsonify({'error': 'Aucun fichier fourni. Clé attendue: "file"'}), 400
+        
+        file = request.files['file']
+        logger.info(f"📦 Fichier trouvé: {file.filename}")
+        
+        if file.filename == '':
+            logger.error("❌ Nom de fichier vide")
+            return jsonify({'error': 'Fichier vide'}), 400
+        
+        # Vérifier l'extension
+        allowed_extensions = {'jpg', 'jpeg', 'png', 'gif'}
+        file_ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+        
+        if file_ext not in allowed_extensions:
+            logger.error(f"❌ Extension non autorisée: .{file_ext}")
+            return jsonify({'error': f'Format non autorisé. Autorisés: {allowed_extensions}'}), 400
+        
+        logger.info(f"✅ Extension autorisée: .{file_ext}")
+        
+        # Sauvegarder temporairement
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+        
+        logger.info(f"💾 Fichier sauvegardé: {filepath}")
+        
+        # Vérifier que le modèle est chargé
+        if not MODEL_LOADED:
+            logger.info("🔄 Chargement du modèle...")
+            if not load_model_on_startup():
+                logger.error("❌ Impossible de charger le modèle")
+                os.remove(filepath)
+                return jsonify({'error': 'Modèle non disponible'}), 500
+        
+        # Prétraiter l'image
+        logger.info("🖼️  Prétraitement de l'image...")
+        img_array = preprocess_image(filepath)
+        logger.info(f"✅ Image prétraitée: shape {img_array.shape}")
+        
+        # Prédire
+        logger.info("🤖 Exécution de la prédiction...")
+        predictions = MODEL.predict(img_array, verbose=0)
+        
+        # Obtenir la classe prédite
+        predicted_class = np.argmax(predictions[0])
+        confidence = float(predictions[0][predicted_class])
+        
+        # Obtenir le label
+        bill_label = BILL_LABELS.get(predicted_class, f"Billet inconnu (classe {predicted_class})")
+        
+        # Nettoyer
+        os.remove(filepath)
+        logger.info(f"🗑️  Fichier temporaire supprimé")
+        
+        logger.info(f"✅ SUCCÈS: {bill_label} (confiance: {confidence:.2%})")
+        logger.info("=" * 50)
+        
+        # Parser le label pour extraire montant et devise
+        # Format: "100 USD" ou "50000 CDF"
+        parts = bill_label.split()
+        amount = parts[0] if parts else "?"
+        currency = parts[1] if len(parts) > 1 else "?"
+        
+        return jsonify({
+            'result': bill_label,
+            'amount': amount,
+            'currency': currency,
+            'confidence': confidence,
+            'class': int(predicted_class)
+        }), 200
+        
+    except Exception as e:
+        logger.error("=" * 50)
+        logger.error(f"❌ ERREUR: {str(e)}")
+        logger.error("=" * 50)
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
+
+@app.route('/model-info', methods=['GET'])
+def model_info():
+    """Retourne les informations sur le modèle"""
+    if MODEL_LOADED:
+        return jsonify({
+            'model_loaded': True,
+            'input_shape': str(MODEL.input_shape),
+            'output_shape': str(MODEL.output_shape),
+            'classes': len(BILL_LABELS),
+            'labels': BILL_LABELS
+        }), 200
+    else:
+        return jsonify({
+            'model_loaded': False,
+            'message': 'Modèle non chargé'
+        }), 503
+
+if __name__ == '__main__':
+    logger.info("Démarrage de l'API Bill Recognition...")
+    load_model_on_startup()
+    app.run(
+        host='0.0.0.0',  # Accessible depuis n'importe quelle machine du réseau
+        port=5000,
+        debug=True,
+        threaded=True
+    )
