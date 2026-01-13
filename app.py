@@ -71,7 +71,7 @@ def load_model_on_startup():
         script_dir = os.path.dirname(os.path.abspath(__file__))
         
         # Chemin vers le modèle dans le même répertoire que app.py
-        model_path = os.path.join(script_dir, 'model.h5')
+        model_path = os.path.join(script_dir, 'model (1).h5')
         
         if not os.path.exists(model_path):
             logger.error(f"❌ Modèle non trouvé à {model_path}")
