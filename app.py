@@ -45,20 +45,22 @@ MODEL = None
 MODEL_LOADED = False
 
 # Dictionnaire de mapping des classes aux billets
-# USD et CDF (Franc Congolais)
+# 14 classes : Ordre exact du dataset (alphabétique)
 BILL_LABELS = {
-    0: "1 USD",
-    1: "5 USD",
-    2: "10 USD",
-    3: "20 USD",
-    4: "50 USD",
-    5: "100 USD",
-    6: "50 CDF",
-    7: "100 CDF",
-    8: "500 CDF",
-    9: "1000 CDF",
-    10: "5000 CDF",
-    11: "20000 CDF",
+    0: "100 CDF",      # 100FC
+    1: "50 CDF",       # 50FC
+    2: "200 CDF",      # 200FC
+    3: "500 CDF",      # 500FC
+    4: "1000 CDF",     # 1000FC
+    5: "5000 CDF",     # 5000FC
+    6: "10000 CDF",    # 10000FC
+    7: "20000 CDF",    # 20000FC
+    8: "100 USD",      # 100$
+    9: "5 USD",        # 5$
+    10: "10 USD",      # 10$
+    11: "50 USD",      # 50$
+    12: "20 USD",      # 20$
+    13: "1 USD",       # 1$
 }
 
 def load_model_on_startup():
