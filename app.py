@@ -74,13 +74,24 @@ def load_model_on_startup():
 def preprocess_image(image_path, target_size=(224, 224)):
     """Prétraite l'image pour le modèle"""
     try:
+        logger.info(f"📖 Ouverture de l'image: {image_path}")
         img = Image.open(image_path).convert('RGB')
+        logger.info(f"✅ Image ouverte: {img.size}")
+        
         img = img.resize(target_size)
+        logger.info(f"✅ Image redimensionnée: {target_size}")
+        
         img_array = np.array(img) / 255.0  # Normaliser entre 0 et 1
+        logger.info(f"✅ Image normalisée: min={img_array.min()}, max={img_array.max()}")
+        
         img_array = np.expand_dims(img_array, axis=0)  # Ajouter dimension batch
+        logger.info(f"✅ Dimension batch ajoutée: {img_array.shape}")
+        
         return img_array
     except Exception as e:
-        logger.error(f"Erreur prétraitement image: {str(e)}")
+        logger.error(f"❌ Erreur prétraitement image: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         raise
 
 @app.route('/health', methods=['GET'])
@@ -177,7 +188,15 @@ def predict():
         
         # Prédire
         logger.info("🤖 Exécution de la prédiction...")
-        predictions = MODEL.predict(img_array, verbose=0)
+        try:
+            predictions = MODEL.predict(img_array, verbose=0)
+            logger.info(f"✅ Prédictions reçues: {predictions.shape}")
+        except Exception as pred_error:
+            logger.error(f"❌ Erreur lors de la prédiction: {str(pred_error)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            os.remove(filepath)
+            return jsonify({'error': f'Erreur prédiction: {str(pred_error)}'}), 500
         
         # Obtenir la classe prédite
         predicted_class = np.argmax(predictions[0])
