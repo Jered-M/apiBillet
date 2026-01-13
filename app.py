@@ -284,5 +284,6 @@ if __name__ == '__main__':
         host='0.0.0.0',  # Accessible depuis n'importe quelle machine du réseau
         port=5000,
         debug=True,
-        threaded=True
+        threaded=True,
+        timeout=300  # 5 minutes pour les requêtes longues
     )
