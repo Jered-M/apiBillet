@@ -8,6 +8,7 @@ import io
 import base64
 from io import BytesIO
 import tensorflow as tf
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 import logging
 import time
 
@@ -108,7 +109,11 @@ def preprocess_image(image_path, target_size=(224, 224)):
         img = img.resize(target_size, Image.Resampling.LANCZOS)
         logger.info(f"✅ Image redimensionnée: {target_size}")
         
-        img_array = np.array(img, dtype=np.float32) / 255.0  # Normaliser entre 0 et 1
+        img_array = np.array(img, dtype=np.float32)
+        
+        # IMPORTANT: Utilisez la fonction officielle au lieu de / 255.0
+        # Elle convertit les pixels de [0, 255] à [-1, 1]
+        img_array = preprocess_input(img_array)
         logger.info(f"✅ Image normalisée: min={img_array.min()}, max={img_array.max()}")
         
         img_array = np.expand_dims(img_array, axis=0)  # Ajouter dimension batch
