@@ -8,7 +8,6 @@ from werkzeug.utils import secure_filename
 from PIL import Image
 
 import tensorflow as tf
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # =========================
 # CONFIGURATION GLOBALE
@@ -84,8 +83,8 @@ def preprocess_image(image_path):
     img = Image.open(image_path).convert("RGB")
     img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
 
-    img_array = np.array(img)
-    img_array = preprocess_input(img_array)  # 🔥 CRUCIAL
+    img_array = np.array(img, dtype=np.float32)
+    img_array = img_array / 255.0  # Normaliser à [0, 1] comme dans le training
     img_array = np.expand_dims(img_array, axis=0)
 
     return img_array
