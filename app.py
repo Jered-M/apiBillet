@@ -9,6 +9,12 @@ import base64
 from io import BytesIO
 import tensorflow as tf
 import logging
+import time
+
+# Configuration TensorFlow pour optimiser la performance CPU
+tf.config.threading.set_inter_op_parallelism_threads(2)
+tf.config.threading.set_intra_op_parallelism_threads(2)
+tf.config.set_visible_devices([], 'GPU')  # Désactiver GPU s'il existe
 
 # Configuration
 app = Flask(__name__)
@@ -82,21 +88,25 @@ def load_model_on_startup():
         logger.error(traceback.format_exc())
         return False
 
-def preprocess_image(image_path, target_size=(224, 224)):
-    """Prétraite l'image pour le modèle"""
+def preprocess_image(image_path, target_size=(160, 160)):
+    """Prétraite l'image pour le modèle - taille réduite pour plus de vitesse"""
     try:
+        start_time = time.time()
         logger.info(f"📖 Ouverture de l'image: {image_path}")
         img = Image.open(image_path).convert('RGB')
         logger.info(f"✅ Image ouverte: {img.size}")
         
-        img = img.resize(target_size)
+        img = img.resize(target_size, Image.Resampling.LANCZOS)
         logger.info(f"✅ Image redimensionnée: {target_size}")
         
-        img_array = np.array(img) / 255.0  # Normaliser entre 0 et 1
+        img_array = np.array(img, dtype=np.float32) / 255.0  # Normaliser entre 0 et 1
         logger.info(f"✅ Image normalisée: min={img_array.min()}, max={img_array.max()}")
         
         img_array = np.expand_dims(img_array, axis=0)  # Ajouter dimension batch
         logger.info(f"✅ Dimension batch ajoutée: {img_array.shape}")
+        
+        elapsed = time.time() - start_time
+        logger.info(f"⏱️ Prétraitement: {elapsed:.2f}s")
         
         return img_array
     except Exception as e:
@@ -212,8 +222,10 @@ def predict():
         # Prédire
         logger.info("🤖 Exécution de la prédiction...")
         try:
+            pred_start = time.time()
             predictions = MODEL.predict(img_array, verbose=0)
-            logger.info(f"✅ Prédictions reçues: {predictions.shape}")
+            pred_time = time.time() - pred_start
+            logger.info(f"✅ Prédictions reçues: {predictions.shape} en {pred_time:.2f}s")
         except Exception as pred_error:
             logger.error(f"❌ Erreur lors de la prédiction: {str(pred_error)}")
             import traceback
