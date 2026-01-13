@@ -12,7 +12,18 @@ import logging
 
 # Configuration
 app = Flask(__name__)
-CORS(app)  # Activer CORS pour toutes les routes
+
+# Configuration CORS avancée
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "expose_headers": ["Content-Type"],
+        "supports_credentials": False,
+        "max_age": 3600
+    }
+})
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max au cas où
 app.config['UPLOAD_FOLDER'] = 'uploads'
 
@@ -94,9 +105,12 @@ def preprocess_image(image_path, target_size=(224, 224)):
         logger.error(traceback.format_exc())
         raise
 
-@app.route('/health', methods=['GET'])
+@app.route('/health', methods=['GET', 'OPTIONS'])
 def health():
     """Endpoint de vérification de santé"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     logger.info("✓ Health check reçu")
     return jsonify({
         'status': 'ok',
@@ -105,7 +119,7 @@ def health():
         'max_content_length': app.config['MAX_CONTENT_LENGTH']
     }), 200
 
-@app.route('/test-upload', methods=['POST'])
+@app.route('/test-upload', methods=['POST', 'OPTIONS'])
 def test_upload():
     """Endpoint de test pour vérifier les uploads"""
     logger.info("=== TEST UPLOAD ===")
@@ -129,13 +143,17 @@ def test_upload():
         'message': 'API Bill Recognition prête'
     }), 200
 
-@app.route('/predict', methods=['POST'])
+@app.route('/predict', methods=['POST', 'OPTIONS'])
 def predict():
     """
     Endpoint pour prédire le billet
     Attendu: Image multipart/form-data avec clé 'file'
     Retour: { "result": "100 USD", "confidence": 0.95 }
     """
+    # Gérer les requêtes OPTIONS (CORS preflight)
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     try:
         logger.info("=" * 50)
         logger.info("🚀 NOUVELLE REQUÊTE /predict")
@@ -234,9 +252,12 @@ def predict():
         logger.error(traceback.format_exc())
         return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
 
-@app.route('/model-info', methods=['GET'])
+@app.route('/model-info', methods=['GET', 'OPTIONS'])
 def model_info():
     """Retourne les informations sur le modèle"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     if MODEL_LOADED:
         return jsonify({
             'model_loaded': True,
