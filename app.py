@@ -50,7 +50,7 @@ def load_model_on_startup():
     global MODEL, MODEL_LOADED
     try:
         # Chemin absolu vers le modèle
-        model_path = r'C:\Users\HP\Pictures\ML\my_banknote_model.h5'
+        model_path = r'C:\Users\HP\Pictures\ML\BillRecognition-API\model.h5'
         
         # Si le fichier n'existe pas au chemin par défaut, chercher dans le dossier courant
         if not os.path.exists(model_path):
