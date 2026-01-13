@@ -8,7 +8,6 @@ import io
 import base64
 from io import BytesIO
 import tensorflow as tf
-from keras.models import load_model
 import logging
 
 # Configuration
@@ -49,25 +48,27 @@ def load_model_on_startup():
     """Charge le modèle au démarrage"""
     global MODEL, MODEL_LOADED
     try:
-        # Chemin absolu vers le modèle
-        model_path = r'C:\Users\HP\Pictures\ML\BillRecognition-API\model.h5'
+        # Obtenir le répertoire du script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # Si le fichier n'existe pas au chemin par défaut, chercher dans le dossier courant
-        if not os.path.exists(model_path):
-            model_path = 'my_banknote_model.h5'
+        # Chemin vers le modèle dans le même répertoire que app.py
+        model_path = os.path.join(script_dir, 'model.h5')
         
         if not os.path.exists(model_path):
-            logger.error(f"Modèle non trouvé à {model_path}")
-            logger.info("⚠️  Le modèle sera chargé dynamiquement lors du premier appel")
+            logger.error(f"❌ Modèle non trouvé à {model_path}")
+            logger.info(f"📁 Répertoire courant: {script_dir}")
+            logger.info(f"📁 Fichiers présents: {os.listdir(script_dir)}")
             return False
         
-        logger.info(f"Chargement du modèle depuis: {model_path}")
-        MODEL = load_model(model_path)
+        logger.info(f"📂 Chargement du modèle depuis: {model_path}")
+        MODEL = tf.keras.models.load_model(model_path)
         MODEL_LOADED = True
-        logger.info("✓ Modèle chargé avec succès")
+        logger.info("✅ Modèle chargé avec succès!")
         return True
     except Exception as e:
-        logger.error(f"Erreur lors du chargement du modèle: {str(e)}")
+        logger.error(f"❌ Erreur lors du chargement du modèle: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
         return False
 
 def preprocess_image(image_path, target_size=(224, 224)):
