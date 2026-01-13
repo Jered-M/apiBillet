@@ -292,9 +292,10 @@ def model_info():
 if __name__ == '__main__':
     logger.info("Démarrage de l'API Bill Recognition...")
     load_model_on_startup()
+    # Ne pas utiliser debug=True en production (cause des redémarrages)
     app.run(
         host='0.0.0.0',
-        port=5000,
-        debug=True,
+        port=int(os.environ.get('PORT', 5000)),
+        debug=False,
         threaded=True
     )
