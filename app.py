@@ -88,8 +88,8 @@ def load_model_on_startup():
         logger.error(traceback.format_exc())
         return False
 
-def preprocess_image(image_path, target_size=(160, 160)):
-    """Prétraite l'image pour le modèle - taille réduite pour plus de vitesse"""
+def preprocess_image(image_path, target_size=(224, 224)):
+    """Prétraite l'image pour le modèle - taille 224x224 comme lors de l'entraînement"""
     try:
         start_time = time.time()
         logger.info(f"📖 Ouverture de l'image: {image_path}")
