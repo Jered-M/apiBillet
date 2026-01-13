@@ -119,6 +119,11 @@ def health():
         'max_content_length': app.config['MAX_CONTENT_LENGTH']
     }), 200
 
+@app.route('/', methods=['GET', 'HEAD'])
+def index():
+    """Route racine pour les health checks Render"""
+    return 'Bill Recognition API is running', 200
+
 @app.route('/test-upload', methods=['POST', 'OPTIONS'])
 def test_upload():
     """Endpoint de test pour vérifier les uploads"""
