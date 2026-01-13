@@ -80,7 +80,14 @@ def load_model_on_startup():
         logger.info(f"📂 Chargement du modèle depuis: {model_path}")
         MODEL = tf.keras.models.load_model(model_path)
         MODEL_LOADED = True
-        logger.info("✅ Modèle chargé avec succès!")
+        
+        # Afficher les infos du modèle
+        logger.info("=" * 50)
+        logger.info(f"✅ Modèle chargé avec succès!")
+        logger.info(f"   - Input shape: {MODEL.input_shape}")
+        logger.info(f"   - Output shape: {MODEL.output_shape}")
+        logger.info(f"   - Nombre de paramètres: {MODEL.count_params()}")
+        logger.info("=" * 50)
         return True
     except Exception as e:
         logger.error(f"❌ Erreur lors du chargement du modèle: {str(e)}")
@@ -285,6 +292,41 @@ def predict():
         import traceback
         logger.error(traceback.format_exc())
         return jsonify({'error': f'Erreur serveur: {str(e)}'}), 500
+
+@app.route('/test-model', methods=['GET'])
+def test_model():
+    """Teste si le modèle fonctionne"""
+    if not MODEL_LOADED:
+        return jsonify({'error': 'Modèle non chargé'}), 503
+    
+    try:
+        # Créer une image test aléatoire
+        test_image = np.random.rand(1, 224, 224, 3).astype(np.float32)
+        
+        logger.info("🧪 Test du modèle avec image aléatoire")
+        pred1 = MODEL.predict(test_image, verbose=0)
+        
+        # Deuxième test avec la même image
+        pred2 = MODEL.predict(test_image, verbose=0)
+        
+        # Vérifier si les résultats sont identiques
+        are_same = np.allclose(pred1, pred2)
+        
+        logger.info(f"Résultats identiques: {are_same}")
+        logger.info(f"Prédiction 1: {pred1[0]}")
+        logger.info(f"Prédiction 2: {pred2[0]}")
+        
+        return jsonify({
+            'model_loaded': True,
+            'test_results_identical': are_same,
+            'prediction_1': pred1[0].tolist(),
+            'prediction_2': pred2[0].tolist()
+        }), 200
+    except Exception as e:
+        logger.error(f"❌ Erreur test modèle: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return jsonify({'error': f'Erreur: {str(e)}'}), 500
 
 @app.route('/model-info', methods=['GET', 'OPTIONS'])
 def model_info():
