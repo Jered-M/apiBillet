@@ -17,17 +17,23 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 IMG_SIZE = (224, 224)
 UPLOAD_FOLDER = "uploads"
 
-# Try multiple model paths
+# Try multiple model paths (in order of preference)
 MODEL_PATHS = [
-    "model.h5",           # Primary model
-    "model (1).h5",       # Fallback model
-    "best_model.h5",      # Alternative model
+    "model_saved",        # SavedModel format (preferred)
+    "best_model.h5",      # Primary H5 model
+    "model.h5",           # Fallback H5 model
+    "model (1).h5",       # Legacy model
 ]
 
 MODEL_PATH = None
 for path in MODEL_PATHS:
-    if os.path.exists(path) and os.path.getsize(path) > 1000000:  # > 1MB
+    if os.path.isdir(path):  # SavedModel is a directory
         MODEL_PATH = path
+        logger.info(f"✓ Found SavedModel at: {path}")
+        break
+    elif os.path.exists(path) and os.path.getsize(path) > 1000000:  # > 1MB for H5
+        MODEL_PATH = path
+        logger.info(f"✓ Found H5 model at: {path} ({os.path.getsize(path) / 1024 / 1024:.1f}MB)")
         break
 
 MIN_CONFIDENCE = 0.50
@@ -85,26 +91,43 @@ def load_model():
     
     if not MODEL_PATH:
         logger.error("❌ Aucun fichier modèle valide trouvé!")
-        logger.error("Fichiers détectés:")
+        logger.error("Fichiers recherchés:")
         for path in MODEL_PATHS:
-            size = os.path.getsize(path) if os.path.exists(path) else 0
-            logger.error(f"  - {path}: {size} bytes")
+            if os.path.isdir(path):
+                logger.error(f"  ✗ {path}/ (SavedModel not found)")
+            elif os.path.exists(path):
+                size_mb = os.path.getsize(path) / 1024 / 1024
+                logger.error(f"  ✗ {path} ({size_mb:.1f}MB - might be corrupted)")
+            else:
+                logger.error(f"  ✗ {path} (not found)")
         raise FileNotFoundError("Aucun modèle valide trouvé")
     
     try:
         logger.info(f"Chargement depuis: {MODEL_PATH}")
+        
+        # Déterminer le format
+        if os.path.isdir(MODEL_PATH):
+            logger.info("Format: SavedModel (répertoire)")
+        else:
+            logger.info("Format: H5 (fichier)")
+        
         MODEL = tf.keras.models.load_model(MODEL_PATH)
         logger.info("✅ Modèle chargé avec succès")
         logger.info(f"Input shape : {MODEL.input_shape}")
         logger.info(f"Output shape: {MODEL.output_shape}")
+        logger.info(f"Modèle params: {MODEL.count_params():,}")
+        
     except Exception as e:
-        logger.error(f"❌ Erreur lors du chargement du modèle: {str(e)}")
+        logger.error(f"❌ Erreur lors du chargement du modèle: {type(e).__name__}: {str(e)}")
+        logger.error("Tentative de chargement du modèle échouée. L'API fonctionnera en mode sans modèle.")
         raise
 
 try:
     load_model()
+    logger.info("🚀 Modèle chargé et prêt!")
 except Exception as e:
-    logger.error(f"⚠️  Impossible de charger le modèle au démarrage: {str(e)}")
+    logger.warning(f"⚠️  Impossible de charger le modèle au démarrage")
+    logger.warning("L'API va démarrer mais retournera une erreur pour les prédictions")
     MODEL = None
 
 # =========================
@@ -158,10 +181,24 @@ def index():
 
 @app.route("/health", methods=["GET"])
 def health():
+    model_info = {
+        "loaded": MODEL is not None,
+        "model_path": MODEL_PATH,
+    }
+    
+    if MODEL is not None:
+        try:
+            model_info["input_shape"] = str(MODEL.input_shape)
+            model_info["output_shape"] = str(MODEL.output_shape)
+            model_info["params"] = MODEL.count_params()
+        except:
+            pass
+    
     return jsonify({
-        "status": "ok",
-        "model_loaded": MODEL is not None
-    }), 200
+        "status": "ok" if MODEL is not None else "degraded",
+        "model": model_info,
+        "port": 5000
+    }), 200 if MODEL is not None else 503
 
 
 @app.route("/predict", methods=["POST"])
