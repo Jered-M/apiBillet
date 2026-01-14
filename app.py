@@ -42,30 +42,6 @@ MODEL_PATHS = [
     "model_saved",        # SavedModel format (last resort - needs tf.saved_model.load)
 ]
 
-MODEL_PATH = None
-MODEL_FORMAT = None
-
-for path in MODEL_PATHS:
-    if path.endswith(".tflite") and os.path.exists(path) and os.path.getsize(path) > 1000000:
-        MODEL_PATH = path
-        MODEL_FORMAT = "tflite"
-        logger.info(f"✓ Found TFLite model at: {path} ({os.path.getsize(path) / 1024 / 1024:.1f}MB)")
-        break
-    elif path == "model_saved" and os.path.isdir(path):  # SavedModel - priorité basse
-        # SavedModel is saved for last resort due to Keras 3 incompatibility
-        pass
-    elif os.path.exists(path) and os.path.getsize(path) > 1000000:  # H5 files
-        MODEL_PATH = path
-        MODEL_FORMAT = "h5"
-        logger.info(f"✓ Found H5 model at: {path} ({os.path.getsize(path) / 1024 / 1024:.1f}MB)")
-        break
-
-# Si aucun H5 ou TFLite trouvé, essayer SavedModel en dernier
-if MODEL_PATH is None and os.path.isdir("model_saved"):
-    MODEL_PATH = "model_saved"
-    MODEL_FORMAT = "saved_model"
-    logger.info(f"✓ Found SavedModel at: model_saved (fallback format)")
-
 MIN_CONFIDENCE = 0.50
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -114,56 +90,71 @@ MODEL = None
 TFLITE_INTERPRETER = None
 
 def load_model():
+    """
+    Essayer de charger le modèle en testant chaque fichier séquentiellement.
+    Passer au suivant si le chargement échoue.
+    """
     global MODEL, TFLITE_INTERPRETER
     logger.info("📦 Chargement du modèle...")
     
-    if not MODEL_PATH:
-        logger.error("❌ Aucun fichier modèle valide trouvé!")
-        logger.error("Fichiers recherchés:")
-        for path in MODEL_PATHS:
-            if os.path.isdir(path):
-                logger.error(f"  ✗ {path}/ (SavedModel not found)")
-            elif os.path.exists(path):
-                size_mb = os.path.getsize(path) / 1024 / 1024
-                logger.error(f"  ✗ {path} ({size_mb:.1f}MB - might be corrupted)")
-            else:
-                logger.error(f"  ✗ {path} (not found)")
+    # Liste de tous les fichiers H5/TFLite/SavedModel à essayer
+    all_models_to_try = []
+    
+    # Vérifier les fichiers locaux
+    for path in MODEL_PATHS:
+        if path.endswith(".tflite") and os.path.exists(path):
+            all_models_to_try.append((path, "tflite"))
+        elif path == "model_saved" and os.path.isdir(path):
+            all_models_to_try.append((path, "saved_model"))
+        elif os.path.exists(path) and not path.endswith(".tflite"):
+            all_models_to_try.append((path, "h5"))
+    
+    if not all_models_to_try:
+        logger.error("❌ Aucun fichier modèle trouvé!")
         raise FileNotFoundError("Aucun modèle valide trouvé")
     
-    try:
-        logger.info(f"📍 Chargement depuis: {MODEL_PATH}")
-        logger.info(f"📊 Format: {MODEL_FORMAT}")
-        
-        if MODEL_FORMAT == "tflite":
-            logger.info("⚡ Chargement TFLite (rapide & léger)...")
-            TFLITE_INTERPRETER = tf.lite.Interpreter(model_path=MODEL_PATH)
-            TFLITE_INTERPRETER.allocate_tensors()
-            logger.info("✅ TFLite chargé")
+    # Essayer chaque fichier
+    last_error = None
+    for model_file, model_format in all_models_to_try:
+        try:
+            logger.info(f"📍 Tentative avec: {model_file}")
             
-        elif MODEL_FORMAT == "saved_model":
-            logger.info("📦 SavedModel détecté - Keras 3 incompatible...")
-            logger.error("❌ SavedModel format n'est pas supporté par Keras 3")
-            raise ValueError("SavedModel format not compatible with Keras 3. Use H5 format instead.")
-            
-        else:  # H5
-            logger.info("📦 Chargement H5 Keras...")
-            MODEL = tf.keras.models.load_model(MODEL_PATH)
-            logger.info("✅ H5 chargé")
-        
-        # Afficher les infos du modèle seulement si ce n'est pas TFLite
-        if MODEL is not None:
-            logger.info("✅ Modèle chargé avec succès")
-            try:
-                logger.info(f"Input shape : {MODEL.input_shape}")
-                logger.info(f"Output shape: {MODEL.output_shape}")
-                logger.info(f"Modèle params: {MODEL.count_params():,}")
-            except Exception as e:
-                logger.warning(f"⚠️  Impossible d'accéder aux infos du modèle: {e}")
-        
-    except Exception as e:
-        logger.error(f"❌ Erreur lors du chargement du modèle: {type(e).__name__}: {str(e)}")
-        logger.error("Tentative de chargement du modèle échouée. L'API fonctionnera en mode sans modèle.")
-        raise
+            if model_format == "tflite":
+                logger.info("⚡ Chargement TFLite...")
+                TFLITE_INTERPRETER = tf.lite.Interpreter(model_path=model_file)
+                TFLITE_INTERPRETER.allocate_tensors()
+                logger.info(f"✅ TFLite chargé: {model_file}")
+                return  # Succès
+                
+            elif model_format == "saved_model":
+                logger.info("❌ SavedModel non supporté par Keras 3")
+                continue  # Sauter au suivant
+                
+            else:  # H5
+                logger.info("📦 Chargement H5...")
+                MODEL = tf.keras.models.load_model(model_file)
+                logger.info(f"✅ H5 chargé: {model_file}")
+                
+                # Afficher les infos du modèle
+                try:
+                    logger.info(f"  Input shape : {MODEL.input_shape}")
+                    logger.info(f"  Output shape: {MODEL.output_shape}")
+                    logger.info(f"  Params: {MODEL.count_params():,}")
+                except Exception as e:
+                    logger.warning(f"⚠️  Impossible d'accéder aux infos: {e}")
+                
+                return  # Succès
+                
+        except Exception as e:
+            last_error = e
+            error_type = type(e).__name__
+            logger.warning(f"⚠️  {error_type} avec {model_file}: {str(e)[:100]}")
+            continue  # Essayer le suivant
+    
+    # Tous les modèles ont échoué
+    logger.error(f"❌ Impossible de charger tous les modèles disponibles")
+    logger.error(f"Dernière erreur: {type(last_error).__name__}: {str(last_error)}")
+    raise last_error if last_error else FileNotFoundError("Aucun modèle n'a pu être chargé")
 
 try:
     load_model()
