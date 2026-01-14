@@ -16,7 +16,20 @@ from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 IMG_SIZE = (224, 224)
 UPLOAD_FOLDER = "uploads"
-MODEL_PATH = "model (1).h5"
+
+# Try multiple model paths
+MODEL_PATHS = [
+    "model.h5",           # Primary model
+    "model (1).h5",       # Fallback model
+    "best_model.h5",      # Alternative model
+]
+
+MODEL_PATH = None
+for path in MODEL_PATHS:
+    if os.path.exists(path) and os.path.getsize(path) > 1000000:  # > 1MB
+        MODEL_PATH = path
+        break
+
 MIN_CONFIDENCE = 0.50
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -69,12 +82,30 @@ MODEL = None
 def load_model():
     global MODEL
     logger.info("📦 Chargement du modèle...")
-    MODEL = tf.keras.models.load_model(MODEL_PATH)
-    logger.info("✅ Modèle chargé")
-    logger.info(f"Input shape : {MODEL.input_shape}")
-    logger.info(f"Output shape: {MODEL.output_shape}")
+    
+    if not MODEL_PATH:
+        logger.error("❌ Aucun fichier modèle valide trouvé!")
+        logger.error("Fichiers détectés:")
+        for path in MODEL_PATHS:
+            size = os.path.getsize(path) if os.path.exists(path) else 0
+            logger.error(f"  - {path}: {size} bytes")
+        raise FileNotFoundError("Aucun modèle valide trouvé")
+    
+    try:
+        logger.info(f"Chargement depuis: {MODEL_PATH}")
+        MODEL = tf.keras.models.load_model(MODEL_PATH)
+        logger.info("✅ Modèle chargé avec succès")
+        logger.info(f"Input shape : {MODEL.input_shape}")
+        logger.info(f"Output shape: {MODEL.output_shape}")
+    except Exception as e:
+        logger.error(f"❌ Erreur lors du chargement du modèle: {str(e)}")
+        raise
 
-load_model()
+try:
+    load_model()
+except Exception as e:
+    logger.error(f"⚠️  Impossible de charger le modèle au démarrage: {str(e)}")
+    MODEL = None
 
 # =========================
 # IMAGE PREPROCESS (CORRECT PIPELINE)
@@ -136,6 +167,13 @@ def health():
 @app.route("/predict", methods=["POST"])
 def predict():
     start_time = time.time()
+
+    # Vérifier que le modèle est chargé
+    if MODEL is None:
+        return jsonify({
+            "error": "Modèle non disponible",
+            "message": "Le modèle n'a pas pu être chargé. Vérifiez que le fichier model.h5 existe et est valide."
+        }), 503
 
     if "file" not in request.files:
         return jsonify({"error": "Aucun fichier envoyé"}), 400
