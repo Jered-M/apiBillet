@@ -36,10 +36,10 @@ UPLOAD_FOLDER = "uploads"
 # Try multiple model paths (in order of preference)
 MODEL_PATHS = [
     "model.tflite",       # TFLite (preferred - 4x smaller)
-    "model_saved",        # SavedModel format
-    "best_model.h5",      # Primary H5 model
-    "model.h5",           # Fallback H5 model
-    "model (1).h5",       # Legacy model
+    "best_model.h5",      # Primary H5 model (Keras 3 compatible)
+    "model.h5",           # Fallback H5 model (Keras 3 compatible)
+    "model (1).h5",       # Legacy model (Keras 3 compatible)
+    "model_saved",        # SavedModel format (last resort - needs tf.saved_model.load)
 ]
 
 MODEL_PATH = None
@@ -51,16 +51,20 @@ for path in MODEL_PATHS:
         MODEL_FORMAT = "tflite"
         logger.info(f"✓ Found TFLite model at: {path} ({os.path.getsize(path) / 1024 / 1024:.1f}MB)")
         break
-    elif os.path.isdir(path):  # SavedModel is a directory
-        MODEL_PATH = path
-        MODEL_FORMAT = "saved_model"
-        logger.info(f"✓ Found SavedModel at: {path}")
-        break
-    elif os.path.exists(path) and os.path.getsize(path) > 1000000:  # > 1MB for H5
+    elif path == "model_saved" and os.path.isdir(path):  # SavedModel - priorité basse
+        # SavedModel is saved for last resort due to Keras 3 incompatibility
+        pass
+    elif os.path.exists(path) and os.path.getsize(path) > 1000000:  # H5 files
         MODEL_PATH = path
         MODEL_FORMAT = "h5"
         logger.info(f"✓ Found H5 model at: {path} ({os.path.getsize(path) / 1024 / 1024:.1f}MB)")
         break
+
+# Si aucun H5 ou TFLite trouvé, essayer SavedModel en dernier
+if MODEL_PATH is None and os.path.isdir("model_saved"):
+    MODEL_PATH = "model_saved"
+    MODEL_FORMAT = "saved_model"
+    logger.info(f"✓ Found SavedModel at: model_saved (fallback format)")
 
 MIN_CONFIDENCE = 0.50
 
@@ -137,9 +141,9 @@ def load_model():
             logger.info("✅ TFLite chargé")
             
         elif MODEL_FORMAT == "saved_model":
-            logger.info("📦 Chargement SavedModel...")
-            MODEL = tf.keras.models.load_model(MODEL_PATH)
-            logger.info("✅ SavedModel chargé")
+            logger.info("📦 SavedModel détecté - Keras 3 incompatible...")
+            logger.error("❌ SavedModel format n'est pas supporté par Keras 3")
+            raise ValueError("SavedModel format not compatible with Keras 3. Use H5 format instead.")
             
         else:  # H5
             logger.info("📦 Chargement H5 Keras...")
