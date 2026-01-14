@@ -10,6 +10,13 @@ from PIL import Image, ImageOps
 import tensorflow as tf
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
+# Support optionnel pour TFLite
+try:
+    import tensorflow.lite as tflite
+    HAS_TFLITE = True
+except:
+    HAS_TFLITE = False
+
 # =========================
 # CONFIGURATION DU LOGGER
 # =========================
@@ -28,20 +35,30 @@ UPLOAD_FOLDER = "uploads"
 
 # Try multiple model paths (in order of preference)
 MODEL_PATHS = [
-    "model_saved",        # SavedModel format (preferred)
+    "model.tflite",       # TFLite (preferred - 4x smaller)
+    "model_saved",        # SavedModel format
     "best_model.h5",      # Primary H5 model
     "model.h5",           # Fallback H5 model
     "model (1).h5",       # Legacy model
 ]
 
 MODEL_PATH = None
+MODEL_FORMAT = None
+
 for path in MODEL_PATHS:
-    if os.path.isdir(path):  # SavedModel is a directory
+    if path.endswith(".tflite") and os.path.exists(path) and os.path.getsize(path) > 1000000:
         MODEL_PATH = path
+        MODEL_FORMAT = "tflite"
+        logger.info(f"✓ Found TFLite model at: {path} ({os.path.getsize(path) / 1024 / 1024:.1f}MB)")
+        break
+    elif os.path.isdir(path):  # SavedModel is a directory
+        MODEL_PATH = path
+        MODEL_FORMAT = "saved_model"
         logger.info(f"✓ Found SavedModel at: {path}")
         break
     elif os.path.exists(path) and os.path.getsize(path) > 1000000:  # > 1MB for H5
         MODEL_PATH = path
+        MODEL_FORMAT = "h5"
         logger.info(f"✓ Found H5 model at: {path} ({os.path.getsize(path) / 1024 / 1024:.1f}MB)")
         break
 
@@ -63,9 +80,6 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB max
 
 CORS(app)
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("BillAPI")
 
 # =========================
 # LABELS (ORDRE DATASET)
@@ -93,9 +107,10 @@ BILL_LABELS = {
 # =========================
 
 MODEL = None
+TFLITE_INTERPRETER = None
 
 def load_model():
-    global MODEL
+    global MODEL, TFLITE_INTERPRETER
     logger.info("📦 Chargement du modèle...")
     
     if not MODEL_PATH:
@@ -112,19 +127,34 @@ def load_model():
         raise FileNotFoundError("Aucun modèle valide trouvé")
     
     try:
-        logger.info(f"Chargement depuis: {MODEL_PATH}")
+        logger.info(f"📍 Chargement depuis: {MODEL_PATH}")
+        logger.info(f"📊 Format: {MODEL_FORMAT}")
         
-        # Déterminer le format
-        if os.path.isdir(MODEL_PATH):
-            logger.info("Format: SavedModel (répertoire)")
-        else:
-            logger.info("Format: H5 (fichier)")
+        if MODEL_FORMAT == "tflite":
+            logger.info("⚡ Chargement TFLite (rapide & léger)...")
+            TFLITE_INTERPRETER = tf.lite.Interpreter(model_path=MODEL_PATH)
+            TFLITE_INTERPRETER.allocate_tensors()
+            logger.info("✅ TFLite chargé")
+            
+        elif MODEL_FORMAT == "saved_model":
+            logger.info("📦 Chargement SavedModel...")
+            MODEL = tf.keras.models.load_model(MODEL_PATH)
+            logger.info("✅ SavedModel chargé")
+            
+        else:  # H5
+            logger.info("📦 Chargement H5 Keras...")
+            MODEL = tf.keras.models.load_model(MODEL_PATH)
+            logger.info("✅ H5 chargé")
         
-        MODEL = tf.keras.models.load_model(MODEL_PATH)
-        logger.info("✅ Modèle chargé avec succès")
-        logger.info(f"Input shape : {MODEL.input_shape}")
-        logger.info(f"Output shape: {MODEL.output_shape}")
-        logger.info(f"Modèle params: {MODEL.count_params():,}")
+        # Afficher les infos du modèle seulement si ce n'est pas TFLite
+        if MODEL is not None:
+            logger.info("✅ Modèle chargé avec succès")
+            try:
+                logger.info(f"Input shape : {MODEL.input_shape}")
+                logger.info(f"Output shape: {MODEL.output_shape}")
+                logger.info(f"Modèle params: {MODEL.count_params():,}")
+            except Exception as e:
+                logger.warning(f"⚠️  Impossible d'accéder aux infos du modèle: {e}")
         
     except Exception as e:
         logger.error(f"❌ Erreur lors du chargement du modèle: {type(e).__name__}: {str(e)}")
@@ -135,8 +165,8 @@ try:
     load_model()
     logger.info("🚀 Modèle chargé et prêt!")
 except Exception as e:
-    logger.warning(f"⚠️  Impossible de charger le modèle au démarrage")
-    logger.warning("L'API va démarrer mais retournera une erreur pour les prédictions")
+    logger.error(f"❌ Impossible de charger le modèle au démarrage: {type(e).__name__}: {str(e)}")
+    logger.error("L'API va démarrer mais retournera une erreur pour les prédictions")
     MODEL = None
 
 # =========================
@@ -215,10 +245,14 @@ def predict():
     start_time = time.time()
 
     # Vérifier que le modèle est chargé
-    if MODEL is None:
+    if MODEL is None and TFLITE_INTERPRETER is None:
+        error_msg = "Modèle non disponible. Vérifiez les fichiers model.h5, model.tflite ou le répertoire model_saved/"
+        logger.error(f"❌ {error_msg}")
         return jsonify({
             "error": "Modèle non disponible",
-            "message": "Le modèle n'a pas pu être chargé. Vérifiez que le fichier model.h5 existe et est valide."
+            "message": error_msg,
+            "available_paths": MODEL_PATHS,
+            "model_path": MODEL_PATH
         }), 503
 
     if "file" not in request.files:
@@ -240,7 +274,22 @@ def predict():
     try:
         img = preprocess_image(filepath)
 
-        preds = MODEL.predict(img, verbose=0)[0]
+        # Prédiction avec TFLite ou Keras
+        if TFLITE_INTERPRETER is not None:
+            # TFLite inference
+            input_details = TFLITE_INTERPRETER.get_input_details()
+            output_details = TFLITE_INTERPRETER.get_output_details()
+            
+            # Adapter l'input
+            input_data = img.astype(input_details[0]['dtype'])
+            TFLITE_INTERPRETER.set_tensor(input_details[0]['index'], input_data)
+            TFLITE_INTERPRETER.invoke()
+            
+            # Récupérer l'output
+            preds = TFLITE_INTERPRETER.get_tensor(output_details[0]['index'])[0]
+        else:
+            # Keras inference
+            preds = MODEL.predict(img, verbose=0)[0]
 
         predicted_class = int(np.argmax(preds))
         confidence = float(preds[predicted_class])
