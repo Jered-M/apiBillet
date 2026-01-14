@@ -216,8 +216,8 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     model_info = {
-        "loaded": MODEL is not None,
-        "model_path": MODEL_PATH,
+        "model_loaded": MODEL is not None or TFLITE_INTERPRETER is not None,
+        "model_type": "keras_h5" if MODEL is not None else ("tflite" if TFLITE_INTERPRETER is not None else "none"),
     }
     
     if MODEL is not None:
@@ -229,42 +229,93 @@ def health():
             pass
     
     return jsonify({
-        "status": "ok" if MODEL is not None else "degraded",
+        "status": "ok" if (MODEL is not None or TFLITE_INTERPRETER is not None) else "model_missing",
         "model": model_info,
         "port": 5000
-    }), 200 if MODEL is not None else 503
+    }), 200 if (MODEL is not None or TFLITE_INTERPRETER is not None) else 503
+
+
+@app.route("/debug/upload", methods=["POST"])
+def debug_upload():
+    """Endpoint de debug pour tester les uploads"""
+    logger.info("🔍 DEBUG: Request reçue")
+    logger.info(f"  Content-Type: {request.content_type}")
+    logger.info(f"  Form keys: {list(request.form.keys())}")
+    logger.info(f"  Files keys: {list(request.files.keys())}")
+    logger.info(f"  Args keys: {list(request.args.keys())}")
+    
+    if "file" in request.files:
+        file = request.files["file"]
+        logger.info(f"  File name: {file.filename}")
+        logger.info(f"  File size: {len(file.read())} bytes")
+        file.seek(0)
+        return jsonify({
+            "debug": "File reçu avec succès",
+            "filename": file.filename,
+            "size": len(file.read())
+        }), 200
+    else:
+        return jsonify({
+            "error": "Pas de fichier détecté",
+            "files_keys": list(request.files.keys()),
+            "content_type": request.content_type
+        }), 400
 
 
 @app.route("/predict", methods=["POST"])
 def predict():
     start_time = time.time()
+    
+    # Log de debug
+    logger.info(f"📨 Request reçue - Content-Type: {request.content_type}")
+    logger.info(f"   Form keys: {list(request.form.keys())}")
+    logger.info(f"   Files keys: {list(request.files.keys())}")
 
     # Vérifier que le modèle est chargé
     if MODEL is None and TFLITE_INTERPRETER is None:
-        error_msg = "Modèle non disponible. Vérifiez les fichiers model.h5, model.tflite ou le répertoire model_saved/"
+        error_msg = "Modèle non disponible"
         logger.error(f"❌ {error_msg}")
         return jsonify({
-            "error": "Modèle non disponible",
-            "message": error_msg,
-            "available_paths": MODEL_PATHS,
-            "model_path": MODEL_PATH
+            "error": error_msg,
+            "message": "Aucun modèle n'a pu être chargé au démarrage"
         }), 503
 
     if "file" not in request.files:
-        return jsonify({"error": "Aucun fichier envoyé"}), 400
+        logger.error(f"❌ Erreur 400: Pas de fichier 'file'")
+        logger.error(f"   Files reçus: {list(request.files.keys())}")
+        return jsonify({
+            "error": "Aucun fichier envoyé",
+            "expected_key": "file",
+            "received_keys": list(request.files.keys())
+        }), 400
 
     file = request.files["file"]
 
     if file.filename == "":
+        logger.error("❌ Erreur 400: Nom de fichier vide")
         return jsonify({"error": "Nom de fichier vide"}), 400
 
     ext = file.filename.rsplit(".", 1)[-1].lower()
     if ext not in {"jpg", "jpeg", "png"}:
-        return jsonify({"error": "Format non supporté"}), 400
+        logger.error(f"❌ Erreur 400: Format non supporté: {ext}")
+        return jsonify({"error": f"Format non supporté: {ext}"}), 400
 
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-    file.save(filepath)
+    
+    logger.info(f"📥 Réception fichier: {filename}")
+    logger.info(f"📥 Extension: {ext}")
+    logger.info(f"📥 Taille: {len(file.read())} bytes")
+    file.seek(0)  # Reset file pointer après lecture
+    
+    try:
+        file.save(filepath)
+        logger.info(f"✅ Fichier sauvegardé: {filepath}")
+        file_size = os.path.getsize(filepath)
+        logger.info(f"✅ Taille sauvegardée: {file_size} bytes")
+    except Exception as e:
+        logger.error(f"❌ Erreur sauvegarde: {e}")
+        return jsonify({"error": f"Erreur sauvegarde: {e}"}), 500
 
     try:
         img = preprocess_image(filepath)
