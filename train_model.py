@@ -37,7 +37,7 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # Configuration TensorFlow
 tf.config.set_visible_devices([], 'GPU')
 tf.config.threading.set_inter_op_parallelism_threads(2)
-tf.config.threading.set_inter_op_parallelism_threads(2)
+tf.config.threading.set_intra_op_parallelism_threads(2)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ModelTraining")
@@ -184,35 +184,120 @@ def build_model(num_classes):
     x = base_model(inputs, training=False)
     x = GlobalAveragePooling2D()(x)
     x = Dense(256, activation='relu')(x)
-x = Dropout(0.5)(x)
-x = Dense(128, activation='relu')(x)
-x = Dropout(0.3)(x)
-outputs = Dense(NUM_CLASSES, activation='softmax')(x)
+    outputs = Dense(num_classes, activation='softmax')(x)
+    
+    model = Model(inputs, outputs)
+    
+    # Dégeler les dernières couches pour fine-tuning
+    fine_tune_at = -30
+    for layer in base_model.layers[fine_tune_at:]:
+        if not isinstance(layer, tf.keras.layers.BatchNormalization):
+            layer.trainable = True
+    
+    logger.info(f"✅ Modèle construit ({len(model.layers)} couches)")
+    
+    return model
 
-model = Model(inputs, outputs)
+# =========================
+# ÉTAPE 5: COMPILER ET ENTRAÎNER
+# =========================
 
-# Compiler le modèle
-model.compile(
-    optimizer=tf.keras.optimizers.Adam(learning_rate=1e-4),
-    loss='categorical_crossentropy',
-    metrics=['accuracy']
-)
+def train_model(model, train_generator, validation_generator):
+    """Entraîne le modèle"""
+    logger.info("\n⚙️ Compilation du modèle...")
+    
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    
+    logger.info("✅ Modèle compilé")
+    logger.info(f"\n🚀 Démarrage de l'entraînement ({EPOCHS} epochs)...\n")
+    
+    history = model.fit(
+        train_generator,
+        epochs=EPOCHS,
+        validation_data=validation_generator,
+        verbose=1
+    )
+    
+    logger.info("\n✅ Entraînement terminé")
+    return history
 
-print(f"✅ Modèle créé avec {model.count_params()} paramètres")
-print(f"📊 Input: {model.input_shape}")
-print(f"📊 Output: {model.output_shape}")
+# =========================
+# ÉTAPE 6: ÉVALUER ET SAUVEGARDER
+# =========================
 
-# Sauvegarder le modèle
-model_path = 'model.h5'
-model.save(model_path)
-print(f"💾 Modèle sauvegardé: {model_path}")
+def evaluate_model(model, validation_generator):
+    """Évalue le modèle"""
+    logger.info("\n📊 Évaluation du modèle...")
+    
+    validation_generator.reset()
+    Y_true = validation_generator.classes
+    
+    Y_pred_probs = model.predict(validation_generator, verbose=1)
+    Y_pred = np.argmax(Y_pred_probs, axis=1)
+    
+    class_labels = list(validation_generator.class_indices.keys())
+    
+    # Confusion matrix
+    cm = confusion_matrix(Y_true, Y_pred)
+    
+    # Classification report
+    report = classification_report(Y_true, Y_pred, target_names=class_labels)
+    
+    logger.info("\n" + "="*60)
+    logger.info("CLASSIFICATION REPORT")
+    logger.info("="*60)
+    logger.info(report)
+    
+    return cm, report
 
-# Test rapide
-print("\n🧪 Test du nouveau modèle:")
-test_img = np.random.rand(1, 224, 224, 3).astype('float32')
-pred = model.predict(test_img, verbose=0)
-print(f"Confiance max: {np.max(pred):.2%}")
-print(f"Classe prédite: {np.argmax(pred)}")
-print(f"Distribution: {pred[0]}")
+def save_model(model, save_path):
+    """Sauvegarde le modèle"""
+    logger.info(f"\n💾 Sauvegarde du modèle à {save_path}...")
+    model.save(save_path)
+    logger.info("✅ Modèle sauvegardé")
 
-print("\n✅ Modèle prêt ! À entraîner avec vos données de billets (14 classes).")
+# =========================
+# MAIN
+# =========================
+
+def main():
+    logger.info("="*60)
+    logger.info("BILL RECOGNITION - ENTRAÎNEMENT DU MODÈLE")
+    logger.info("="*60)
+    
+    # Étape 1: Vérifier le dataset
+    logger.info(f"\n📁 Recherche du dataset: {DATASET_PATH}")
+    classes = get_dataset_structure(DATASET_PATH)
+    if not classes:
+        return
+    
+    # Étape 2: Scanner les images
+    valid_images = scan_valid_images(DATASET_PATH, classes)
+    if not valid_images:
+        logger.error("❌ Aucune image valide trouvée")
+        return
+    
+    # Étape 3: Créer les generators
+    train_gen, val_gen = create_data_generators(valid_images)
+    
+    # Étape 4: Construire le modèle
+    model = build_model(len(classes))
+    
+    # Étape 5: Entraîner
+    history = train_model(model, train_gen, val_gen)
+    
+    # Étape 6: Évaluer et sauvegarder
+    evaluate_model(model, val_gen)
+    save_model(model, MODEL_SAVE_PATH)
+    
+    logger.info("\n" + "="*60)
+    logger.info("✅ PROCESSUS TERMINÉ AVEC SUCCÈS")
+    logger.info("="*60)
+    logger.info(f"📦 Modèle disponible à: {MODEL_SAVE_PATH}")
+
+if __name__ == "__main__":
+    main()

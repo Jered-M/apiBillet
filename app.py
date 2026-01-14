@@ -5,9 +5,10 @@ import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-from PIL import Image
+from PIL import Image, ImageOps
 
 import tensorflow as tf
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # =========================
 # CONFIGURATION GLOBALE
@@ -76,17 +77,43 @@ def load_model():
 load_model()
 
 # =========================
-# IMAGE PREPROCESS (CORRECT)
+# IMAGE PREPROCESS (CORRECT PIPELINE)
 # =========================
 
 def preprocess_image(image_path):
-    img = Image.open(image_path).convert("RGB")
-    img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
-
+    """
+    Prétraitement CORRECT pour MobileNetV2 :
+    1. Charger l'image
+    2. Corriger l'orientation EXIF (CRITIQUE pour iPhone)
+    3. Convertir en RGB
+    4. Redimensionner avec BICUBIC
+    5. Appliquer preprocess_input MobileNetV2
+    """
+    img = Image.open(image_path)
+    
+    # 🔥 ÉTAPE CRITIQUE : Corriger l'orientation EXIF
+    img = ImageOps.exif_transpose(img)
+    
+    # Convertir en RGB
+    img = img.convert('RGB')
+    
+    # Crop automatique (optionnel, pour cenrer le billet)
+    # img = img.crop(img.getbbox())
+    
+    # Redimensionner avec BICUBIC (meilleure qualité)
+    img = img.resize(IMG_SIZE, Image.Resampling.BICUBIC)
+    
+    # Convertir en array
     img_array = np.array(img, dtype=np.float32)
-    img_array = img_array / 255.0  # Normaliser à [0, 1] comme dans le training
+    
+    # 🔥 ÉTAPE CRITIQUE : preprocess_input MobileNetV2
+    img_array = preprocess_input(img_array)
+    
+    # Ajouter dimension batch
     img_array = np.expand_dims(img_array, axis=0)
-
+    
+    logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}, Min: {img_array.min():.2f}, Max: {img_array.max():.2f}")
+    
     return img_array
 
 # =========================
