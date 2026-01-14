@@ -11,6 +11,15 @@ import tensorflow as tf
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # =========================
+# CONFIGURATION DU LOGGER
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# =========================
 # CONFIGURATION GLOBALE
 # =========================
 
