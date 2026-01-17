@@ -33,7 +33,7 @@ IMG_SIZE = (224, 224)
 UPLOAD_FOLDER = "uploads"
 MIN_CONFIDENCE = 0.50
 
-# Labels définissables (si dataset non disponible)
+# Labels (12 classes - basé sur output shape du modèle)
 BILL_LABELS = {
     0: "100 CDF",
     1: "50 CDF",
@@ -47,8 +47,6 @@ BILL_LABELS = {
     9: "5 USD",
     10: "10 USD",
     11: "50 USD",
-    12: "20 USD",
-    13: "1 USD",
 }
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -170,8 +168,8 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     model_info = {
-        "model_loaded": MODEL is not None or TFLITE_INTERPRETER is not None,
-        "model_type": "keras_h5" if MODEL is not None else ("tflite" if TFLITE_INTERPRETER is not None else "none"),
+        "model_loaded": MODEL is not None,
+        "model_type": "keras_h5" if MODEL is not None else "none",
     }
     
     if MODEL is not None:
@@ -179,14 +177,15 @@ def health():
             model_info["input_shape"] = str(MODEL.input_shape)
             model_info["output_shape"] = str(MODEL.output_shape)
             model_info["params"] = MODEL.count_params()
+            model_info["num_classes"] = MODEL.output_shape[-1] if MODEL.output_shape else "unknown"
         except:
             pass
     
     return jsonify({
-        "status": "ok" if (MODEL is not None or TFLITE_INTERPRETER is not None) else "model_missing",
+        "status": "ok" if MODEL is not None else "model_missing",
         "model": model_info,
         "port": 5000
-    }), 200 if (MODEL is not None or TFLITE_INTERPRETER is not None) else 503
+    }), 200 if MODEL is not None else 503
 
 
 @app.route("/debug/upload", methods=["POST"])
