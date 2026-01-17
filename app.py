@@ -262,6 +262,34 @@ def debug_upload():
         }), 400
 
 
+@app.route("/debug/save-raw", methods=["POST"])
+def debug_save_raw():
+    """Sauvegarde l'image brute SANS preprocessing pour test Colab"""
+    logger.info("💾 DEBUG: Sauvegarde image brute pour test")
+    
+    if "file" not in request.files:
+        return jsonify({"error": "Pas de fichier"}), 400
+    
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "Nom vide"}), 400
+    
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"raw_{filename}")
+    
+    try:
+        file.save(filepath)
+        logger.info(f"✅ Image brute sauvegardée: {filepath}")
+        return jsonify({
+            "message": "Image sauvegardée",
+            "path": filepath,
+            "instruction": "Télécharge cette image et teste dans Colab"
+        }), 200
+    except Exception as e:
+        logger.error(f"❌ Erreur: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/predict", methods=["POST"])
 def predict():
     start_time = time.time()
