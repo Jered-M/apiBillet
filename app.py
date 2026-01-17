@@ -31,17 +31,25 @@ logger = logging.getLogger(__name__)
 
 IMG_SIZE = (224, 224)
 UPLOAD_FOLDER = "uploads"
-
-# Try multiple model paths (in order of preference)
-MODEL_PATHS = [
-    "model.tflite",       # TFLite (preferred - 4x smaller)
-    "model.h5",           # Primary H5 model
-    "model (1).h5",       # Alternate H5 model
-    "best_model.h5",      # Fallback H5 model
-    "model_saved",        # SavedModel format (last resort - needs tf.saved_model.load)
-]
-
 MIN_CONFIDENCE = 0.50
+
+# Labels définissables (si dataset non disponible)
+BILL_LABELS = {
+    0: "100 CDF",
+    1: "50 CDF",
+    2: "200 CDF",
+    3: "500 CDF",
+    4: "1000 CDF",
+    5: "5000 CDF",
+    6: "10000 CDF",
+    7: "20000 CDF",
+    8: "100 USD",
+    9: "5 USD",
+    10: "10 USD",
+    11: "50 USD",
+    12: "20 USD",
+    13: "1 USD",
+}
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -61,106 +69,47 @@ app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB max
 CORS(app)
 
 # =========================
-# LABELS (ORDRE DATASET)
-# =========================
-
-BILL_LABELS = {
-    0: "100 CDF",
-    1: "50 CDF",
-    2: "200 CDF",
-    3: "500 CDF",
-    4: "1000 CDF",
-    5: "5000 CDF",
-    6: "10000 CDF",
-    7: "20000 CDF",
-    8: "100 USD",
-    9: "5 USD",
-    10: "10 USD",
-    11: "50 USD",
-    12: "20 USD",
-    13: "1 USD",
-}
-
-# =========================
 # LOAD MODEL
 # =========================
 
 MODEL = None
-TFLITE_INTERPRETER = None
 
-def load_model():
+def load_model_simple():
     """
-    Essayer de charger le modèle en testant chaque fichier séquentiellement.
-    Passer au suivant si le chargement échoue.
+    Charge le modèle Keras en priorité model.h5
+    Exactement comme dans le notebook entraîné
     """
-    global MODEL, TFLITE_INTERPRETER
+    global MODEL
+    
+    model_paths = ["model.h5", "model (1).h5", "best_model.h5"]
+    
     logger.info("📦 Chargement du modèle...")
     
-    # Liste de tous les fichiers H5/TFLite/SavedModel à essayer
-    all_models_to_try = []
-    
-    # Vérifier les fichiers locaux
-    for path in MODEL_PATHS:
-        if path.endswith(".tflite") and os.path.exists(path):
-            all_models_to_try.append((path, "tflite"))
-        elif path == "model_saved" and os.path.isdir(path):
-            all_models_to_try.append((path, "saved_model"))
-        elif os.path.exists(path) and not path.endswith(".tflite"):
-            all_models_to_try.append((path, "h5"))
-    
-    if not all_models_to_try:
-        logger.error("❌ Aucun fichier modèle trouvé!")
-        raise FileNotFoundError("Aucun modèle valide trouvé")
-    
-    # Essayer chaque fichier
-    last_error = None
-    for model_file, model_format in all_models_to_try:
-        try:
-            logger.info(f"📍 Tentative avec: {model_file}")
-            
-            if model_format == "tflite":
-                logger.info("⚡ Chargement TFLite...")
-                TFLITE_INTERPRETER = tf.lite.Interpreter(model_path=model_file)
-                TFLITE_INTERPRETER.allocate_tensors()
-                logger.info(f"✅ TFLite chargé: {model_file}")
-                return  # Succès
-                
-            elif model_format == "saved_model":
-                logger.info("❌ SavedModel non supporté par Keras 3")
-                continue  # Sauter au suivant
-                
-            else:  # H5
-                logger.info("📦 Chargement H5...")
+    for model_file in model_paths:
+        if os.path.exists(model_file):
+            try:
+                logger.info(f"📍 Tentative avec: {model_file}")
                 MODEL = tf.keras.models.load_model(model_file)
-                logger.info(f"✅ H5 chargé: {model_file}")
-                
-                # Afficher les infos du modèle
-                try:
-                    logger.info(f"  Input shape : {MODEL.input_shape}")
-                    logger.info(f"  Output shape: {MODEL.output_shape}")
-                    logger.info(f"  Params: {MODEL.count_params():,}")
-                except Exception as e:
-                    logger.warning(f"⚠️  Impossible d'accéder aux infos: {e}")
-                
-                return  # Succès
-                
-        except Exception as e:
-            last_error = e
-            error_type = type(e).__name__
-            logger.warning(f"⚠️  {error_type} avec {model_file}: {str(e)[:100]}")
-            continue  # Essayer le suivant
+                logger.info(f"✅ Modèle chargé: {model_file}")
+                logger.info(f"  Input shape : {MODEL.input_shape}")
+                logger.info(f"  Output shape: {MODEL.output_shape}")
+                logger.info(f"  Params: {MODEL.count_params():,}")
+                return True
+            except Exception as e:
+                logger.warning(f"⚠️  Erreur avec {model_file}: {e}")
+                continue
     
-    # Tous les modèles ont échoué
-    logger.error(f"❌ Impossible de charger tous les modèles disponibles")
-    logger.error(f"Dernière erreur: {type(last_error).__name__}: {str(last_error)}")
-    raise last_error if last_error else FileNotFoundError("Aucun modèle n'a pu être chargé")
+    logger.error("❌ Aucun modèle n'a pu être chargé")
+    return False
 
 try:
-    load_model()
-    logger.info("🚀 Modèle chargé et prêt!")
+    if load_model_simple():
+        logger.info("🚀 Modèle chargé et prêt!")
+    else:
+        logger.error("L'API va démarrer mais retournera une erreur pour les prédictions")
+        MODEL = None
 except Exception as e:
-    logger.error(f"❌ Impossible de charger le modèle au démarrage: {type(e).__name__}: {str(e)}")
-    logger.error("L'API va démarrer mais retournera une erreur pour les prédictions")
+    logger.error(f"❌ Erreur au démarrage: {e}")
     MODEL = None
 
 # =========================
@@ -297,107 +246,77 @@ def debug_save_raw():
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    """
+    Endpoint de prédiction - EXACTEMENT comme dans le notebook
+    
+    Logique:
+    1. Reçoit une image (file)
+    2. Prétraite (redimensionner 224x224, normaliser /255)
+    3. Prédit la classe
+    4. Retourne la classe et la confiance
+    """
     start_time = time.time()
     
-    # Log de debug
-    logger.info(f"📨 Request reçue - Content-Type: {request.content_type}")
-    logger.info(f"   Form keys: {list(request.form.keys())}")
-    logger.info(f"   Files keys: {list(request.files.keys())}")
+    # Vérifier le modèle
+    if MODEL is None:
+        logger.error("❌ Modèle non disponible")
+        return jsonify({"error": "Modèle non chargé"}), 503
 
-    # Vérifier que le modèle est chargé
-    if MODEL is None and TFLITE_INTERPRETER is None:
-        error_msg = "Modèle non disponible"
-        logger.error(f"❌ {error_msg}")
-        return jsonify({
-            "error": error_msg,
-            "message": "Aucun modèle n'a pu être chargé au démarrage"
-        }), 503
-
+    # Vérifier le fichier
     if "file" not in request.files:
-        logger.error(f"❌ Erreur 400: Pas de fichier 'file'")
-        logger.error(f"   Files reçus: {list(request.files.keys())}")
-        return jsonify({
-            "error": "Aucun fichier envoyé",
-            "expected_key": "file",
-            "received_keys": list(request.files.keys())
-        }), 400
+        logger.error("❌ Pas de fichier")
+        return jsonify({"error": "Pas de fichier envoyé"}), 400
 
     file = request.files["file"]
-
     if file.filename == "":
-        logger.error("❌ Erreur 400: Nom de fichier vide")
-        return jsonify({"error": "Nom de fichier vide"}), 400
+        logger.error("❌ Filename vide")
+        return jsonify({"error": "Filename vide"}), 400
 
+    # Vérifier l'extension
     ext = file.filename.rsplit(".", 1)[-1].lower()
-    if ext not in {"jpg", "jpeg", "png"}:
-        logger.error(f"❌ Erreur 400: Format non supporté: {ext}")
+    if ext not in {"jpg", "jpeg", "png", "gif", "bmp"}:
         return jsonify({"error": f"Format non supporté: {ext}"}), 400
 
     filename = secure_filename(file.filename)
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
     
-    logger.info(f"📥 Réception fichier: {filename}")
-    logger.info(f"📥 Extension: {ext}")
-    logger.info(f"📥 Taille: {len(file.read())} bytes")
-    file.seek(0)  # Reset file pointer après lecture
-    
     try:
+        # Sauvegarder temporairement
         file.save(filepath)
-        logger.info(f"✅ Fichier sauvegardé: {filepath}")
-        file_size = os.path.getsize(filepath)
-        logger.info(f"✅ Taille sauvegardée: {file_size} bytes")
-    except Exception as e:
-        logger.error(f"❌ Erreur sauvegarde: {e}")
-        return jsonify({"error": f"Erreur sauvegarde: {e}"}), 500
-
-    try:
-        img = preprocess_image(filepath)
-
-        # Prédiction avec TFLite ou Keras
-        if TFLITE_INTERPRETER is not None:
-            # TFLite inference
-            input_details = TFLITE_INTERPRETER.get_input_details()
-            output_details = TFLITE_INTERPRETER.get_output_details()
-            
-            # Adapter l'input
-            input_data = img.astype(input_details[0]['dtype'])
-            TFLITE_INTERPRETER.set_tensor(input_details[0]['index'], input_data)
-            TFLITE_INTERPRETER.invoke()
-            
-            # Récupérer l'output
-            preds = TFLITE_INTERPRETER.get_tensor(output_details[0]['index'])[0]
-        else:
-            # Keras inference
-            preds = MODEL.predict(img, verbose=0)[0]
-
-        predicted_class = int(np.argmax(preds))
-        confidence = float(preds[predicted_class])
-
-        logger.info("📊 Prédictions:")
-        for i, p in enumerate(preds):
-            logger.info(f"{BILL_LABELS[i]} → {p:.2%}")
-
-        if confidence < MIN_CONFIDENCE:
-            return jsonify({
-                "error": "Confiance trop faible",
-                "confidence": confidence
-            }), 400
-
-        label = BILL_LABELS[predicted_class]
-        amount, currency = label.split()
-
+        logger.info(f"✅ Image reçue: {filename}")
+        
+        # Prétraiter (comme dans le notebook)
+        img_array = preprocess_image(filepath)
+        logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}")
+        
+        # Prédire
+        predictions = MODEL.predict(img_array, verbose=0)
+        predicted_class_idx = np.argmax(predictions[0])
+        confidence = float(predictions[0][predicted_class_idx])
+        
+        # Obtenir le label
+        predicted_label = BILL_LABELS.get(predicted_class_idx, f"Unknown ({predicted_class_idx})")
+        
+        logger.info(f"🎯 Prédiction: {predicted_label} ({confidence:.2%})")
+        
+        # Retourner le résultat (format comme notebook)
         return jsonify({
-            "result": label,
-            "amount": amount,
-            "currency": currency,
-            "confidence": confidence,
-            "class": predicted_class,
+            "prediction": predicted_label,
+            "confidence": f"{confidence:.2%}",
+            "confidence_value": confidence,
+            "class_index": predicted_class_idx,
             "processing_time": round(time.time() - start_time, 2)
         }), 200
-
+        
+    except Exception as e:
+        logger.error(f"❌ Erreur prédiction: {e}")
+        return jsonify({"error": f"Erreur: {str(e)}"}), 500
+    
     finally:
+        # Nettoyer
         if os.path.exists(filepath):
             os.remove(filepath)
+            logger.info(f"🗑️  Image temporaire supprimée")
 
 # =========================
 # MAIN

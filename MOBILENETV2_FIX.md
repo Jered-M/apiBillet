@@ -16,7 +16,7 @@ Cela convertit [0, 255] → [-1, 1], pas [0, 1] comme un rescale normal.
 # ❌ INCORRECT - donne [0, 1]
 img_array = np.array(img) / 255.0
 
-# ❌ INCORRECT - donne [0, 1]  
+# ❌ INCORRECT - donne [0, 1]
 train_datagen = ImageDataGenerator(rescale=1./255)
 ```
 
@@ -38,16 +38,19 @@ train_datagen = ImageDataGenerator(
 ## ✅ FICHIERS CORRIGÉS
 
 ### 1. ML1.ipynb (Colab)
+
 - ✅ ImageDataGenerator avec `preprocessing_function=preprocess_input`
 - ✅ Pas de `rescale=1./255` au training
 - ✅ Au test: utilise `preprocess_input`
 
-### 2. app.py (Backend Flask)  
+### 2. app.py (Backend Flask)
+
 - ✅ Déjà correct - utilise `preprocess_input`
 - ✅ Ajoute ExifTranspose pour iPhone
 - ✅ Endpoint `/debug/save-raw` pour tests
 
 ### 3. React Native (App)
+
 - ⏳ À faire: skipProcessing + ExifTranspose backend
 
 ---
@@ -55,21 +58,27 @@ train_datagen = ImageDataGenerator(
 ## 🧪 SCRIPTS DE TEST
 
 ### 1. test_pipeline.py
+
 ```bash
 python test_pipeline.py uploads/raw_bill.jpg
 ```
+
 Teste le preprocessing comme Colab.
 
 ### 2. validate_pipeline.py (NOUVEAU)
+
 ```bash
 python validate_pipeline.py uploads/raw_bill.jpg
 ```
+
 Compare Colab vs Backend - doit être **100% identique**.
 
 ### 3. test_api.bat
+
 ```bash
 test_api.bat uploads/raw_bill.jpg
 ```
+
 Teste le backend Flask.
 
 ---
@@ -77,6 +86,7 @@ Teste le backend Flask.
 ## 🎯 PROCÉDURE DE VÉRIFICATION
 
 1. **Colab** : Télécharge ML1.ipynb corrigé
+
    ```python
    img_array = preprocess_input(img_array)
    ```
@@ -84,12 +94,14 @@ Teste le backend Flask.
 2. **Backend** : Lance `python app.py` (déjà correct)
 
 3. **Test** :
+
    ```bash
    python validate_pipeline.py uploads/test.jpg
    ```
+
    Doit afficher **✅ Classes identiques**
 
-4. **App** : 
+4. **App** :
    - Prends une photo
    - Envoie au backend
    - Compare avec Colab
