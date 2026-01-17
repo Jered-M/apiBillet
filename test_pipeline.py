@@ -27,6 +27,7 @@ def preprocess_image(image_path):
     """
     IDENTIQUE à app.py
     Normalisation: rescale=1./255 (modèle entraîné)
+    Redimensionnement: LANCZOS (comme ImageDataGenerator)
     """
     img = Image.open(image_path)
     
@@ -36,8 +37,8 @@ def preprocess_image(image_path):
     # Convertir en RGB
     img = img.convert('RGB')
     
-    # Redimensionner
-    img = img.resize((224, 224), Image.Resampling.BICUBIC)
+    # Redimensionner avec LANCZOS (comme ImageDataGenerator)
+    img = img.resize((224, 224), Image.Resampling.LANCZOS)
     
     # Convertir en array
     img_array = np.array(img, dtype=np.float32)

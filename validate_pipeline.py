@@ -29,9 +29,10 @@ import tensorflow as tf
 def preprocess_colab_style(image_path):
     """
     Style Colab - rescale=1./255
+    Redimensionnement: LANCZOS (comme ImageDataGenerator)
     """
     img = Image.open(image_path).convert('RGB')
-    img = img.resize((224, 224), Image.BICUBIC)
+    img = img.resize((224, 224), Image.Resampling.LANCZOS)
     img_array = np.array(img, dtype=np.float32)
     img_array = img_array / 255.0  # Normalisation rescale=1./255
     img_array = np.expand_dims(img_array, axis=0)
@@ -45,11 +46,12 @@ def preprocess_backend_style(image_path):
     """
     Style Backend - avec EXIF transpose
     Normalisation: rescale=1./255
+    Redimensionnement: LANCZOS (comme ImageDataGenerator)
     """
     img = Image.open(image_path)
     img = ImageOps.exif_transpose(img)
     img = img.convert('RGB')
-    img = img.resize((224, 224), Image.Resampling.BICUBIC)
+    img = img.resize((224, 224), Image.Resampling.LANCZOS)
     img_array = np.array(img, dtype=np.float32)
     img_array = img_array / 255.0  # Normalisation rescale=1./255
     img_array = np.expand_dims(img_array, axis=0)

@@ -169,40 +169,43 @@ except Exception as e:
 
 def preprocess_image(image_path):
     """
-    Prétraitement compatible avec le modèle entraîné :
-    Le modèle utilise rescale=1./255 (normalisation [0, 1])
+    Prétraitement IDENTIQUE au modèle entraîné.
     
+    Le modèle a été entraîné avec:
+    - ImageDataGenerator(rescale=1./255)
+    - flow_from_directory avec target_size=(224, 224)
+    - PIL Image.load_img (utilise LANCZOS par défaut)
+    
+    Pipeline:
     1. Charger l'image
-    2. Corriger l'orientation EXIF (CRITIQUE pour iPhone)
+    2. Corriger l'orientation EXIF (pour iPhone)
     3. Convertir en RGB
-    4. Redimensionner avec BICUBIC
-    5. Normaliser par 255.0 (COMME LE MODÈLE)
+    4. Redimensionner à 224x224 avec LANCZOS (COMME ImageDataGenerator)
+    5. Normaliser par 255.0 (EXACTEMENT comme rescale=1./255)
     """
     img = Image.open(image_path)
     
-    # 🔥 ÉTAPE CRITIQUE : Corriger l'orientation EXIF
+    # Corriger l'orientation EXIF (important pour les photos iPhone)
     img = ImageOps.exif_transpose(img)
     
-    # Convertir en RGB
+    # Convertir en RGB (ImageDataGenerator le fait automatiquement)
     img = img.convert('RGB')
     
-    # Crop automatique (optionnel, pour cenrer le billet)
-    # img = img.crop(img.getbbox())
-    
-    # Redimensionner avec BICUBIC (meilleure qualité)
-    img = img.resize(IMG_SIZE, Image.Resampling.BICUBIC)
+    # Redimensionner avec LANCZOS (algorithme par défaut de PIL pour downsampling)
+    # C'est ce qu'utilise ImageDataGenerator/Keras par défaut
+    img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
     
     # Convertir en array
     img_array = np.array(img, dtype=np.float32)
     
-    # 🔥 NORMALISATION: diviser par 255.0 (comme le modèle entraîné)
-    # Le modèle a été entraîné avec rescale=1./255 → [0, 1]
+    # Normaliser par 255.0 (EXACTEMENT rescale=1./255)
+    # Convertit [0, 255] → [0, 1]
     img_array = img_array / 255.0
     
-    # Ajouter dimension batch
+    # Ajouter dimension batch (comme model.predict() l'attend)
     img_array = np.expand_dims(img_array, axis=0)
     
-    logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}, Min: {img_array.min():.2f}, Max: {img_array.max():.2f}")
+    logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}, Range: [{img_array.min():.2f}, {img_array.max():.2f}]")
     
     return img_array
 
