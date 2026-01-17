@@ -4,6 +4,8 @@ TEST PIPELINE COLAB VS BACKEND
 
 Vérifie que le preprocessing Colab == preprocessing Backend
 
+Le modèle utilise rescale=1./255 (normalisation [0, 1])
+
 Usage:
     python test_pipeline.py <image_path>
 
@@ -15,7 +17,6 @@ import os
 import sys
 import numpy as np
 from PIL import Image, ImageOps
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 import tensorflow as tf
 
 # =========================
@@ -25,6 +26,7 @@ import tensorflow as tf
 def preprocess_image(image_path):
     """
     IDENTIQUE à app.py
+    Normalisation: rescale=1./255 (modèle entraîné)
     """
     img = Image.open(image_path)
     
@@ -40,8 +42,8 @@ def preprocess_image(image_path):
     # Convertir en array
     img_array = np.array(img, dtype=np.float32)
     
-    # preprocess_input MobileNetV2
-    img_array = preprocess_input(img_array)
+    # Normaliser par 255.0 (comme le modèle entraîné)
+    img_array = img_array / 255.0
     
     # Ajouter dimension batch
     img_array = np.expand_dims(img_array, axis=0)

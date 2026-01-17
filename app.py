@@ -8,7 +8,6 @@ from werkzeug.utils import secure_filename
 from PIL import Image, ImageOps
 
 import tensorflow as tf
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # Support optionnel pour TFLite
 try:
@@ -165,17 +164,19 @@ except Exception as e:
     MODEL = None
 
 # =========================
-# IMAGE PREPROCESS (CORRECT PIPELINE)
+# IMAGE PREPROCESS (COMPATIBLE MODEL)
 # =========================
 
 def preprocess_image(image_path):
     """
-    Prétraitement CORRECT pour MobileNetV2 :
+    Prétraitement compatible avec le modèle entraîné :
+    Le modèle utilise rescale=1./255 (normalisation [0, 1])
+    
     1. Charger l'image
     2. Corriger l'orientation EXIF (CRITIQUE pour iPhone)
     3. Convertir en RGB
     4. Redimensionner avec BICUBIC
-    5. Appliquer preprocess_input MobileNetV2
+    5. Normaliser par 255.0 (COMME LE MODÈLE)
     """
     img = Image.open(image_path)
     
@@ -194,8 +195,9 @@ def preprocess_image(image_path):
     # Convertir en array
     img_array = np.array(img, dtype=np.float32)
     
-    # 🔥 ÉTAPE CRITIQUE : preprocess_input MobileNetV2
-    img_array = preprocess_input(img_array)
+    # 🔥 NORMALISATION: diviser par 255.0 (comme le modèle entraîné)
+    # Le modèle a été entraîné avec rescale=1./255 → [0, 1]
+    img_array = img_array / 255.0
     
     # Ajouter dimension batch
     img_array = np.expand_dims(img_array, axis=0)

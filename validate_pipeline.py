@@ -2,14 +2,16 @@
 VALIDATION COMPLÈTE - COLAB VS BACKEND VS APP
 ==============================================
 
-Vérifies que le pipeline MobileNetV2 est IDENTIQUE partout.
+Vérifies que le pipeline est IDENTIQUE partout.
+
+Le modèle utilise rescale=1./255 (normalisation [0, 1])
 
 Usage:
     python validate_pipeline.py <image_path>
 
 Cet script fait :
-1. ✅ Prétraite l'image comme Colab (avec preprocess_input)
-2. ✅ Prétraite l'image comme Backend (avec preprocess_input)
+1. ✅ Prétraite l'image comme Colab (rescale=1./255)
+2. ✅ Prétraite l'image comme Backend (rescale=1./255)
 3. ✅ Montre les différences (doit être 0%)
 4. ✅ Compare les prédictions
 """
@@ -18,7 +20,6 @@ import os
 import sys
 import numpy as np
 from PIL import Image, ImageOps
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 import tensorflow as tf
 
 # =========================
@@ -27,12 +28,12 @@ import tensorflow as tf
 
 def preprocess_colab_style(image_path):
     """
-    Style Colab - CORRIGÉ avec preprocess_input
+    Style Colab - rescale=1./255
     """
     img = Image.open(image_path).convert('RGB')
     img = img.resize((224, 224), Image.BICUBIC)
     img_array = np.array(img, dtype=np.float32)
-    img_array = preprocess_input(img_array)  # ← CORRECTION !
+    img_array = img_array / 255.0  # Normalisation rescale=1./255
     img_array = np.expand_dims(img_array, axis=0)
     return img_array
 
@@ -43,13 +44,14 @@ def preprocess_colab_style(image_path):
 def preprocess_backend_style(image_path):
     """
     Style Backend - avec EXIF transpose
+    Normalisation: rescale=1./255
     """
     img = Image.open(image_path)
     img = ImageOps.exif_transpose(img)
     img = img.convert('RGB')
     img = img.resize((224, 224), Image.Resampling.BICUBIC)
     img_array = np.array(img, dtype=np.float32)
-    img_array = preprocess_input(img_array)
+    img_array = img_array / 255.0  # Normalisation rescale=1./255
     img_array = np.expand_dims(img_array, axis=0)
     return img_array
 
