@@ -35,9 +35,9 @@ UPLOAD_FOLDER = "uploads"
 # Try multiple model paths (in order of preference)
 MODEL_PATHS = [
     "model.tflite",       # TFLite (preferred - 4x smaller)
-    "model (1).h5",       # Primary model (Keras 3 compatible)
+    "model.h5",           # Primary H5 model
+    "model (1).h5",       # Alternate H5 model
     "best_model.h5",      # Fallback H5 model
-    "model.h5",           # Fallback H5 model
     "model_saved",        # SavedModel format (last resort - needs tf.saved_model.load)
 ]
 
