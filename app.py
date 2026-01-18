@@ -33,9 +33,8 @@ IMG_SIZE = (224, 224)
 UPLOAD_FOLDER = "uploads"
 MIN_CONFIDENCE = 0.50
 
-# Labels (14 classes - selon le modèle Colab)
-# Le modèle sur Colab a 14 classes, le model.h5 local en a 12
-# Adapter selon le modèle réel chargé
+# Labels - ADAPTER AU MODÈLE RÉEL CHARGÉ
+# ✅ Le model.h5 a 14 classes (depuis Downloads)
 BILL_LABELS = {
     0: "100 CDF",
     1: "50 CDF",
@@ -49,8 +48,8 @@ BILL_LABELS = {
     9: "5 USD",
     10: "10 USD",
     11: "50 USD",
-    12: "20 USD",
-    13: "1 USD",
+    12: "20 USD",    # ← Nouvelles classes
+    13: "1 USD",     # ← Nouvelles classes
 }
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -79,50 +78,30 @@ TFLITE_INTERPRETER = None
 
 def load_model_simple():
     """
-    Charge le modèle avec priorité:
-    1. TFLite (optimisé, plus rapide)
-    2. H5 Keras (fallback)
+    Charge le modèle correctement depuis Colab
+    
+    ✅ CORRECTION: Utiliser model.h5 (14 classes) depuis Downloads
+    C'est le vrai modèle entraîné sur Colab avec toutes les dénominations
     """
     global MODEL, TFLITE_INTERPRETER
     
     logger.info("📦 Chargement du modèle...")
     
-    # Essayer TFLite d'abord (plus rapide et optimisé)
-    if os.path.exists("model (1).tflite"):
+    # Charger model.h5 (c'est le VRAI modèle de Colab avec 14 classes)
+    if os.path.exists("model.h5"):
         try:
-            logger.info("📍 Tentative TFLite: model (1).tflite")
-            TFLITE_INTERPRETER = tf.lite.Interpreter(model_path="model (1).tflite")
-            TFLITE_INTERPRETER.allocate_tensors()
-            
-            output_details = TFLITE_INTERPRETER.get_output_details()
-            num_classes = output_details[0]['shape'][-1]
-            
-            logger.info(f"✅ TFLite chargé: model (1).tflite")
-            logger.info(f"  Output shape: {output_details[0]['shape']}")
-            logger.info(f"  Nombre de classes: {num_classes}")
+            logger.info("📍 Chargement: model.h5 (Colab - 14 classes)")
+            MODEL = tf.keras.models.load_model("model.h5")
+            logger.info(f"✅ model.h5 chargé")
+            logger.info(f"  Input shape : {MODEL.input_shape}")
+            logger.info(f"  Output shape: {MODEL.output_shape}")
+            logger.info(f"  Classes: {MODEL.output_shape[-1]}")
+            logger.info(f"✅ C'est le MÊME modèle qu'en Colab")
             return True
         except Exception as e:
-            logger.warning(f"⚠️  Erreur TFLite: {e}")
-            TFLITE_INTERPRETER = None
+            logger.error(f"❌ Erreur model.h5: {e}")
     
-    # Fallback sur H5 Keras
-    model_paths = ["model.h5", "model (1).h5", "best_model.h5"]
-    
-    for model_file in model_paths:
-        if os.path.exists(model_file):
-            try:
-                logger.info(f"📍 Tentative H5: {model_file}")
-                MODEL = tf.keras.models.load_model(model_file)
-                logger.info(f"✅ H5 chargé: {model_file}")
-                logger.info(f"  Input shape : {MODEL.input_shape}")
-                logger.info(f"  Output shape: {MODEL.output_shape}")
-                logger.info(f"  Params: {MODEL.count_params():,}")
-                return True
-            except Exception as e:
-                logger.warning(f"⚠️  Erreur H5 {model_file}: {e}")
-                continue
-    
-    logger.error("❌ Aucun modèle n'a pu être chargé")
+    logger.error("❌ model.h5 non trouvé - API non fonctionnelle")
     return False
 
 try:
@@ -185,35 +164,14 @@ def preprocess_image(image_path):
 # INFERENCE FUNCTION
 # =========================
 
-def predict_tflite(img_array):
-    """Prédit avec le modèle TFLite"""
-    try:
-        input_details = TFLITE_INTERPRETER.get_input_details()
-        output_details = TFLITE_INTERPRETER.get_output_details()
-        
-        # Convertir en float32 si nécessaire
-        if input_details[0]['dtype'] == np.float32:
-            img_array = img_array.astype(np.float32)
-        
-        TFLITE_INTERPRETER.set_tensor(input_details[0]['index'], img_array)
-        TFLITE_INTERPRETER.invoke()
-        
-        predictions = TFLITE_INTERPRETER.get_tensor(output_details[0]['index'])
-        num_classes = output_details[0]['shape'][-1]
-        
-        return predictions[0], num_classes
-    except Exception as e:
-        logger.error(f"Erreur TFLite: {e}")
-        raise
-
-def predict_keras(img_array):
-    """Prédit avec le modèle Keras H5"""
+def predict_model(img_array):
+    """Prédit avec le modèle Keras H5 (seule source fiable)"""
     try:
         predictions = MODEL.predict(img_array, verbose=0)
         num_classes = predictions.shape[-1]
         return predictions[0], num_classes
     except Exception as e:
-        logger.error(f"Erreur Keras: {e}")
+        logger.error(f"Erreur prédiction: {e}")
         raise
 
 # =========================
@@ -228,28 +186,21 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     model_info = {
-        "model_loaded": TFLITE_INTERPRETER is not None or MODEL is not None,
-        "model_type": "tflite" if TFLITE_INTERPRETER is not None else ("keras_h5" if MODEL is not None else "none"),
+        "model_loaded": MODEL is not None,
+        "model_type": "keras_h5",
+        "source": "Colab"
     }
     
-    if TFLITE_INTERPRETER is not None:
-        try:
-            output_details = TFLITE_INTERPRETER.get_output_details()
-            model_info["output_shape"] = str(output_details[0]['shape'])
-            model_info["num_classes"] = output_details[0]['shape'][-1]
-            model_info["file"] = "model (1).tflite"
-        except:
-            pass
-    elif MODEL is not None:
+    if MODEL is not None:
         try:
             model_info["input_shape"] = str(MODEL.input_shape)
             model_info["output_shape"] = str(MODEL.output_shape)
-            model_info["params"] = MODEL.count_params()
             model_info["num_classes"] = MODEL.output_shape[-1] if MODEL.output_shape else "unknown"
+            model_info["file"] = "model.h5"
         except:
             pass
     
-    is_ready = TFLITE_INTERPRETER is not None or MODEL is not None
+    is_ready = MODEL is not None
     return jsonify({
         "status": "ok" if is_ready else "model_missing",
         "model": model_info,
@@ -357,17 +308,13 @@ def predict():
         img_array = preprocess_image(filepath)
         logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}")
         
-        # Prédire avec TFLite (priorité) ou H5 (fallback)
-        if TFLITE_INTERPRETER is not None:
-            logger.info("🔮 Utilisation: TFLite")
-            predictions, num_classes = predict_tflite(img_array)
-        else:
-            logger.info("🔮 Utilisation: Keras H5")
-            predictions, num_classes = predict_keras(img_array)
+        # Prédire avec model.h5 UNIQUEMENT (source Colab)
+        logger.info("🔮 Utilisation: model.h5 (Colab - 14 classes)")
+        predictions, num_classes = predict_model(img_array)
         
-        predicted_class_idx = int(np.argmax(predictions))  # ← Convertir np.int64 en int Python
+        predicted_class_idx = int(np.argmax(predictions))
         confidence = float(predictions[predicted_class_idx])
-        num_classes = int(num_classes)  # ← Convertir en int Python
+        num_classes = int(num_classes)
         
         # Obtenir le label
         if predicted_class_idx < len(BILL_LABELS):
@@ -377,14 +324,16 @@ def predict():
         
         logger.info(f"🎯 Prédiction: {predicted_label} ({confidence:.2%}) [Classes: {num_classes}]")
         
-        # Retourner le résultat (format comme notebook)
+        # Retourner le résultat (format attendu par l'app)
         return jsonify({
+            "result": predicted_label,
             "prediction": predicted_label,
-            "confidence": f"{confidence:.2%}",
+            "confidence": float(confidence),
             "confidence_value": confidence,
-            "class_index": predicted_class_idx,
+            "class": int(predicted_class_idx),
+            "class_index": int(predicted_class_idx),
             "num_classes": num_classes,
-            "model_type": "tflite" if TFLITE_INTERPRETER is not None else "keras_h5",
+            "model": "model.h5 (Colab)",
             "processing_time": round(time.time() - start_time, 2)
         }), 200
         

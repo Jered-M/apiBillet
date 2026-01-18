@@ -3,6 +3,7 @@
 ## Résumé des changements
 
 L'API a été migré de **Keras H5** vers **TensorFlow Lite** pour bénéficier de :
+
 - ⚡ Inférence plus rapide
 - 💾 Taille de modèle réduite (9.72 MB)
 - 📱 Meilleure compatibilité mobile
@@ -60,21 +61,23 @@ else:
 ### 2. Fonctions d'inférence
 
 #### TFLite
+
 ```python
 def predict_tflite(img_array):
     input_details = TFLITE_INTERPRETER.get_input_details()
     output_details = TFLITE_INTERPRETER.get_output_details()
-    
+
     TFLITE_INTERPRETER.set_tensor(input_details[0]['index'], img_array)
     TFLITE_INTERPRETER.invoke()
-    
+
     predictions = TFLITE_INTERPRETER.get_tensor(output_details[0]['index'])
     num_classes = output_details[0]['shape'][-1]
-    
+
     return predictions[0], num_classes
 ```
 
 #### Keras (fallback)
+
 ```python
 def predict_keras(img_array):
     predictions = MODEL.predict(img_array, verbose=0)
@@ -89,13 +92,13 @@ def predict_keras(img_array):
 def predict():
     # Prétraiter
     img_array = preprocess_image(filepath)
-    
+
     # Prédire avec TFLite (priorité) ou H5 (fallback)
     if TFLITE_INTERPRETER is not None:
         predictions, num_classes = predict_tflite(img_array)
     else:
         predictions, num_classes = predict_keras(img_array)
-    
+
     # Retourner résultat
     return jsonify({
         "prediction": predicted_label,
@@ -127,22 +130,26 @@ def predict():
 ## Compatibilité
 
 ### Avant (Keras H5)
+
 - ❌ Modèle local.h5: 12 classes (obsolète)
 - ⚠️ best_model.h5: Corrompu
 - ⚠️ model (1).h5: Corrompu
 
 ### Après (TFLite)
+
 - ✅ model (1).tflite: 14 classes (Colab)
 - ✅ Fallback sur Keras H5 si nécessaire
 
 ## Tests
 
 Exécuter le test complet :
+
 ```bash
 python test_tflite_api.py
 ```
 
 Résultat attendu :
+
 ```
 ✅ TFLite chargé correctement
 ✅ 14 classes détectées
@@ -153,6 +160,7 @@ Résultat attendu :
 ## Performance
 
 **TFLite vs Keras H5** (sur CPU) :
+
 - **Taille**: 9.72 MB (TFLite) vs ~150 MB (H5)
 - **Latence**: ~50-100ms (TFLite) vs ~150-200ms (H5)
 - **Mémoire**: Réduite de ~60%
@@ -179,6 +187,7 @@ assert np.allclose(pred_colab, pred_api)  # ✅
 ## Dépannage
 
 ### "Modèle non chargé" (503)
+
 ```bash
 # Vérifier que model (1).tflite existe
 ls -la "model (1).tflite"
@@ -188,6 +197,7 @@ python -c "import tensorflow as tf; tf.lite.Interpreter('model (1).tflite')"
 ```
 
 ### "Erreur preprocessing"
+
 ```bash
 # Vérifier PIL/Pillow
 python -c "from PIL import Image, ImageOps; print('✅ PIL OK')"
@@ -197,6 +207,7 @@ python test_pipeline.py
 ```
 
 ### "Résultats différents Colab vs API"
+
 ```bash
 # Valider preprocessing identique
 python validate_pipeline.py
@@ -224,6 +235,7 @@ c4eeaa7 Fix: Correct number of classes to 12
 ## Contact
 
 Pour tout problème ou question sur la migration TFLite :
+
 - Vérifier les logs : `python test_tflite_api.py`
 - Valider preprocessing : `python test_pipeline.py`
 - Comparer Colab vs API : `python validate_pipeline.py`
