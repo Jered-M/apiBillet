@@ -365,8 +365,9 @@ def predict():
             logger.info("🔮 Utilisation: Keras H5")
             predictions, num_classes = predict_keras(img_array)
         
-        predicted_class_idx = np.argmax(predictions)
+        predicted_class_idx = int(np.argmax(predictions))  # ← Convertir np.int64 en int Python
         confidence = float(predictions[predicted_class_idx])
+        num_classes = int(num_classes)  # ← Convertir en int Python
         
         # Obtenir le label
         if predicted_class_idx < len(BILL_LABELS):
