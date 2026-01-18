@@ -33,7 +33,9 @@ IMG_SIZE = (224, 224)
 UPLOAD_FOLDER = "uploads"
 MIN_CONFIDENCE = 0.50
 
-# Labels (12 classes - basé sur output shape du modèle)
+# Labels (14 classes - selon le modèle Colab)
+# Le modèle sur Colab a 14 classes, le model.h5 local en a 12
+# Adapter selon le modèle réel chargé
 BILL_LABELS = {
     0: "100 CDF",
     1: "50 CDF",
@@ -47,6 +49,8 @@ BILL_LABELS = {
     9: "5 USD",
     10: "10 USD",
     11: "50 USD",
+    12: "20 USD",
+    13: "1 USD",
 }
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -293,10 +297,14 @@ def predict():
         predicted_class_idx = np.argmax(predictions[0])
         confidence = float(predictions[0][predicted_class_idx])
         
-        # Obtenir le label
-        predicted_label = BILL_LABELS.get(predicted_class_idx, f"Unknown ({predicted_class_idx})")
+        # Obtenir le label - gérer les modèles avec 12 ou 14 classes
+        num_classes = MODEL.output_shape[-1] if MODEL.output_shape else len(BILL_LABELS)
+        if predicted_class_idx < len(BILL_LABELS):
+            predicted_label = BILL_LABELS.get(predicted_class_idx, f"Unknown ({predicted_class_idx})")
+        else:
+            predicted_label = f"Unknown ({predicted_class_idx})"
         
-        logger.info(f"🎯 Prédiction: {predicted_label} ({confidence:.2%})")
+        logger.info(f"🎯 Prédiction: {predicted_label} ({confidence:.2%}) [Classes: {num_classes}]")
         
         # Retourner le résultat (format comme notebook)
         return jsonify({
@@ -304,6 +312,7 @@ def predict():
             "confidence": f"{confidence:.2%}",
             "confidence_value": confidence,
             "class_index": predicted_class_idx,
+            "num_classes": num_classes,
             "processing_time": round(time.time() - start_time, 2)
         }), 200
         
