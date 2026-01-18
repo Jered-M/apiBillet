@@ -75,30 +75,51 @@ CORS(app)
 # =========================
 
 MODEL = None
+TFLITE_INTERPRETER = None
 
 def load_model_simple():
     """
-    Charge le modèle Keras en priorité model.h5
-    Exactement comme dans le notebook entraîné
+    Charge le modèle avec priorité:
+    1. TFLite (optimisé, plus rapide)
+    2. H5 Keras (fallback)
     """
-    global MODEL
-    
-    model_paths = ["model.h5", "model (1).h5", "best_model.h5"]
+    global MODEL, TFLITE_INTERPRETER
     
     logger.info("📦 Chargement du modèle...")
+    
+    # Essayer TFLite d'abord (plus rapide et optimisé)
+    if os.path.exists("model (1).tflite"):
+        try:
+            logger.info("📍 Tentative TFLite: model (1).tflite")
+            TFLITE_INTERPRETER = tf.lite.Interpreter(model_path="model (1).tflite")
+            TFLITE_INTERPRETER.allocate_tensors()
+            
+            output_details = TFLITE_INTERPRETER.get_output_details()
+            num_classes = output_details[0]['shape'][-1]
+            
+            logger.info(f"✅ TFLite chargé: model (1).tflite")
+            logger.info(f"  Output shape: {output_details[0]['shape']}")
+            logger.info(f"  Nombre de classes: {num_classes}")
+            return True
+        except Exception as e:
+            logger.warning(f"⚠️  Erreur TFLite: {e}")
+            TFLITE_INTERPRETER = None
+    
+    # Fallback sur H5 Keras
+    model_paths = ["model.h5", "model (1).h5", "best_model.h5"]
     
     for model_file in model_paths:
         if os.path.exists(model_file):
             try:
-                logger.info(f"📍 Tentative avec: {model_file}")
+                logger.info(f"📍 Tentative H5: {model_file}")
                 MODEL = tf.keras.models.load_model(model_file)
-                logger.info(f"✅ Modèle chargé: {model_file}")
+                logger.info(f"✅ H5 chargé: {model_file}")
                 logger.info(f"  Input shape : {MODEL.input_shape}")
                 logger.info(f"  Output shape: {MODEL.output_shape}")
                 logger.info(f"  Params: {MODEL.count_params():,}")
                 return True
             except Exception as e:
-                logger.warning(f"⚠️  Erreur avec {model_file}: {e}")
+                logger.warning(f"⚠️  Erreur H5 {model_file}: {e}")
                 continue
     
     logger.error("❌ Aucun modèle n'a pu être chargé")
@@ -109,10 +130,10 @@ try:
         logger.info("🚀 Modèle chargé et prêt!")
     else:
         logger.error("L'API va démarrer mais retournera une erreur pour les prédictions")
-        MODEL = None
 except Exception as e:
     logger.error(f"❌ Erreur au démarrage: {e}")
     MODEL = None
+    TFLITE_INTERPRETER = None
 
 # =========================
 # IMAGE PREPROCESS (COMPATIBLE MODEL)
@@ -161,6 +182,41 @@ def preprocess_image(image_path):
     return img_array
 
 # =========================
+# INFERENCE FUNCTION
+# =========================
+
+def predict_tflite(img_array):
+    """Prédit avec le modèle TFLite"""
+    try:
+        input_details = TFLITE_INTERPRETER.get_input_details()
+        output_details = TFLITE_INTERPRETER.get_output_details()
+        
+        # Convertir en float32 si nécessaire
+        if input_details[0]['dtype'] == np.float32:
+            img_array = img_array.astype(np.float32)
+        
+        TFLITE_INTERPRETER.set_tensor(input_details[0]['index'], img_array)
+        TFLITE_INTERPRETER.invoke()
+        
+        predictions = TFLITE_INTERPRETER.get_tensor(output_details[0]['index'])
+        num_classes = output_details[0]['shape'][-1]
+        
+        return predictions[0], num_classes
+    except Exception as e:
+        logger.error(f"Erreur TFLite: {e}")
+        raise
+
+def predict_keras(img_array):
+    """Prédit avec le modèle Keras H5"""
+    try:
+        predictions = MODEL.predict(img_array, verbose=0)
+        num_classes = predictions.shape[-1]
+        return predictions[0], num_classes
+    except Exception as e:
+        logger.error(f"Erreur Keras: {e}")
+        raise
+
+# =========================
 # ROUTES
 # =========================
 
@@ -172,11 +228,19 @@ def index():
 @app.route("/health", methods=["GET"])
 def health():
     model_info = {
-        "model_loaded": MODEL is not None,
-        "model_type": "keras_h5" if MODEL is not None else "none",
+        "model_loaded": TFLITE_INTERPRETER is not None or MODEL is not None,
+        "model_type": "tflite" if TFLITE_INTERPRETER is not None else ("keras_h5" if MODEL is not None else "none"),
     }
     
-    if MODEL is not None:
+    if TFLITE_INTERPRETER is not None:
+        try:
+            output_details = TFLITE_INTERPRETER.get_output_details()
+            model_info["output_shape"] = str(output_details[0]['shape'])
+            model_info["num_classes"] = output_details[0]['shape'][-1]
+            model_info["file"] = "model (1).tflite"
+        except:
+            pass
+    elif MODEL is not None:
         try:
             model_info["input_shape"] = str(MODEL.input_shape)
             model_info["output_shape"] = str(MODEL.output_shape)
@@ -185,11 +249,12 @@ def health():
         except:
             pass
     
+    is_ready = TFLITE_INTERPRETER is not None or MODEL is not None
     return jsonify({
-        "status": "ok" if MODEL is not None else "model_missing",
+        "status": "ok" if is_ready else "model_missing",
         "model": model_info,
         "port": 5000
-    }), 200 if MODEL is not None else 503
+    }), 200 if is_ready else 503
 
 
 @app.route("/debug/upload", methods=["POST"])
@@ -255,14 +320,14 @@ def predict():
     Logique:
     1. Reçoit une image (file)
     2. Prétraite (redimensionner 224x224, normaliser /255)
-    3. Prédit la classe
+    3. Prédit la classe (TFLite priorité, puis H5)
     4. Retourne la classe et la confiance
     """
     start_time = time.time()
     
-    # Vérifier le modèle
-    if MODEL is None:
-        logger.error("❌ Modèle non disponible")
+    # Vérifier les modèles
+    if TFLITE_INTERPRETER is None and MODEL is None:
+        logger.error("❌ Aucun modèle disponible")
         return jsonify({"error": "Modèle non chargé"}), 503
 
     # Vérifier le fichier
@@ -292,13 +357,18 @@ def predict():
         img_array = preprocess_image(filepath)
         logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}")
         
-        # Prédire
-        predictions = MODEL.predict(img_array, verbose=0)
-        predicted_class_idx = np.argmax(predictions[0])
-        confidence = float(predictions[0][predicted_class_idx])
+        # Prédire avec TFLite (priorité) ou H5 (fallback)
+        if TFLITE_INTERPRETER is not None:
+            logger.info("🔮 Utilisation: TFLite")
+            predictions, num_classes = predict_tflite(img_array)
+        else:
+            logger.info("🔮 Utilisation: Keras H5")
+            predictions, num_classes = predict_keras(img_array)
         
-        # Obtenir le label - gérer les modèles avec 12 ou 14 classes
-        num_classes = MODEL.output_shape[-1] if MODEL.output_shape else len(BILL_LABELS)
+        predicted_class_idx = np.argmax(predictions)
+        confidence = float(predictions[predicted_class_idx])
+        
+        # Obtenir le label
         if predicted_class_idx < len(BILL_LABELS):
             predicted_label = BILL_LABELS.get(predicted_class_idx, f"Unknown ({predicted_class_idx})")
         else:
@@ -313,6 +383,7 @@ def predict():
             "confidence_value": confidence,
             "class_index": predicted_class_idx,
             "num_classes": num_classes,
+            "model_type": "tflite" if TFLITE_INTERPRETER is not None else "keras_h5",
             "processing_time": round(time.time() - start_time, 2)
         }), 200
         
