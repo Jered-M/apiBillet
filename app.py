@@ -19,8 +19,10 @@ import json
 # ============ CONFIGURATION ============
 IMG_HEIGHT = 224
 IMG_WIDTH = 224
-MODEL_SAVE_DIR = r"C:\Users\HP\Music\MLBillet"
-DATASET_PATH = r"C:\Users\HP\Pictures\ML\BillRecognition-API"
+# Chemins relatifs pour la compatibilité avec les serveurs
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_SAVE_DIR = os.getenv("MODEL_SAVE_DIR", os.path.join(BASE_DIR, "model_saved"))
+LABELS_FILE = os.path.join(BASE_DIR, "test_bills", "labels.json")
 
 # ============ VARIABLES GLOBALES ============
 model = None
@@ -33,15 +35,16 @@ def load_model_and_labels():
     global model, class_labels
     
     try:
-        # Charger les labels à partir du dataset
-        if os.path.exists(DATASET_PATH):
-            class_labels = sorted([
-                d for d in os.listdir(DATASET_PATH) 
-                if os.path.isdir(os.path.join(DATASET_PATH, d))
-            ])
-            print(f"[OK] Classes détectées : {class_labels}")
+        # Charger les labels depuis le fichier JSON
+        if os.path.exists(LABELS_FILE):
+            with open(LABELS_FILE, 'r') as f:
+                labels_dict = json.load(f)
+                # Extraire les labels uniques et les trier
+                class_labels = sorted(list(set(labels_dict.values())))
+                print(f"[OK] Classes chargées depuis JSON : {class_labels}")
         else:
-            raise FileNotFoundError(f"Dataset path non trouvé: {DATASET_PATH}")
+            print(f"[ATTENTION] Fichier labels.json non trouvé: {LABELS_FILE}")
+            class_labels = []
         
         # Chercher le modèle
         model_names = [
@@ -59,10 +62,9 @@ def load_model_and_labels():
                 break
         
         if model_path is None:
-            raise FileNotFoundError(
-                f"Aucun modèle trouvé dans {MODEL_SAVE_DIR}. "
-                f"Fichiers attendus: {model_names}"
-            )
+            print(f"[ATTENTION] Aucun modèle trouvé dans {MODEL_SAVE_DIR}")
+            print(f"[INFO] Fichiers attendus: {model_names}")
+            return False
         
         # Charger le modèle
         model = load_model(model_path)
@@ -194,21 +196,21 @@ async def info():
         raise HTTPException(status_code=503, detail="Modèle non chargé")
     
     return {
-        "statut": "✅ Prêt",
+        "statut": "[OK] Prêt",
         "modele_charge": True,
         "classes": class_labels,
         "nb_classes": len(class_labels),
         "img_hauteur": IMG_HEIGHT,
         "img_largeur": IMG_WIDTH,
         "model_save_dir": MODEL_SAVE_DIR,
-        "dataset_path": DATASET_PATH
+        "labels_file": LABELS_FILE
     }
 
 @app.get("/health")
 async def health():
     """Vérifier la santé de l'API"""
     return {
-        "statut": "✅ Opérationnel",
+        "statut": "[OK] Opérationnel",
         "modele_charge": model is not None,
         "classes_disponibles": len(class_labels) > 0
     }
