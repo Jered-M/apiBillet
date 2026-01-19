@@ -183,30 +183,10 @@ def test_on_real_images(model_path, test_images_dir, labels_file=None):
     return True
 
 if __name__ == "__main__":
-    # À adapter selon votre structure
+    # Configuration
     model_path = r"c:\Users\HP\Downloads\model (1).h5"
-    test_images_dir = r"c:\path\to\test\images"  # À modifier
-    labels_file = r"c:\path\to\labels.json"  # Optionnel
+    test_images_dir = r"test_bills"  # Images créées ci-dessus
+    labels_file = r"test_bills\labels.json"  # Labels JSON
     
-    print("""
-    📌 USAGE:
-    
-    Option 1 - Avec structure de dossiers:
-    test_images/
-    ├── 100 CDF/
-    │   ├── img1.jpg
-    ├── 50 CDF/
-    ...
-    
-    Option 2 - Avec JSON:
-    {
-        "img1.jpg": "100 CDF",
-        "img2.jpg": "50 CDF"
-    }
-    
-    Modifiez les chemins dans ce script puis exécutez.
-    """)
-    
-    # Décommentez selon votre besoin:
-    # test_on_real_images(model_path, test_images_dir)
-    # test_on_real_images(model_path, test_images_dir, labels_file)
+    # Exécuter le test
+    test_on_real_images(model_path, test_images_dir, labels_file)

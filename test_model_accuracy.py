@@ -194,5 +194,5 @@ def load_and_test_model(model_path):
     return True
 
 if __name__ == "__main__":
-    model_path = r"c:\Users\HP\Downloads\model (1).h5"
+    model_path = r"model (1).h5"  # Local model
     load_and_test_model(model_path)
