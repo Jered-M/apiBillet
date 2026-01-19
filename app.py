@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="API Reconnaissance de Billets",
     description="Prédiction de billets avec le modèle EfficientNet/MobileNetV2",
-    version="1.0.0",
+    version="1.0.1",
     lifespan=lifespan
 )
 
