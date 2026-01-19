@@ -134,31 +134,61 @@ def preprocess_image(image_path):
     4. Redimensionner à 224x224 avec LANCZOS (COMME ImageDataGenerator)
     5. Normaliser par 255.0 (EXACTEMENT comme rescale=1./255)
     """
-    img = Image.open(image_path)
-    
-    # Corriger l'orientation EXIF (important pour les photos iPhone)
-    img = ImageOps.exif_transpose(img)
-    
-    # Convertir en RGB (ImageDataGenerator le fait automatiquement)
-    img = img.convert('RGB')
-    
-    # Redimensionner avec LANCZOS (algorithme par défaut de PIL pour downsampling)
-    # C'est ce qu'utilise ImageDataGenerator/Keras par défaut
-    img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
-    
-    # Convertir en array
-    img_array = np.array(img, dtype=np.float32)
-    
-    # Normaliser par 255.0 (EXACTEMENT rescale=1./255)
-    # Convertit [0, 255] → [0, 1]
-    img_array = img_array / 255.0
-    
-    # Ajouter dimension batch (comme model.predict() l'attend)
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}, Range: [{img_array.min():.2f}, {img_array.max():.2f}]")
-    
-    return img_array
+    try:
+        # Vérifier que le fichier existe et est lisible
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Fichier non trouvé: {image_path}")
+        
+        file_size = os.path.getsize(image_path)
+        if file_size == 0:
+            raise ValueError(f"Fichier vide: {image_path}")
+        
+        logger.info(f"📸 Ouverture du fichier: {image_path} ({file_size} bytes)")
+        
+        # Ouvrir et valider l'image
+        img = Image.open(image_path)
+        img.verify()  # Vérifier que c'est une image valide
+        
+        # Réouvrir après verify() (qui ferme le fichier)
+        img = Image.open(image_path)
+        logger.info(f"✅ Image valide - Format: {img.format}, Size: {img.size}, Mode: {img.mode}")
+        
+        # Corriger l'orientation EXIF (important pour les photos iPhone)
+        img = ImageOps.exif_transpose(img)
+        
+        # Convertir en RGB (ImageDataGenerator le fait automatiquement)
+        img = img.convert('RGB')
+        
+        # Redimensionner avec LANCZOS (algorithme par défaut de PIL pour downsampling)
+        # C'est ce qu'utilise ImageDataGenerator/Keras par défaut
+        img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
+        
+        # Convertir en array
+        img_array = np.array(img, dtype=np.float32)
+        
+        # Normaliser par 255.0 (EXACTEMENT rescale=1./255)
+        # Convertit [0, 255] → [0, 1]
+        img_array = img_array / 255.0
+        
+        # Ajouter dimension batch (comme model.predict() l'attend)
+        img_array = np.expand_dims(img_array, axis=0)
+        
+        logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}, Range: [{img_array.min():.2f}, {img_array.max():.2f}]")
+        
+        return img_array
+        
+    except Image.UnidentifiedImageError as e:
+        logger.error(f"❌ Format image non reconnu: {e}")
+        raise ValueError(f"Format image invalide: {str(e)}")
+    except FileNotFoundError as e:
+        logger.error(f"❌ Fichier non trouvé: {e}")
+        raise
+    except ValueError as e:
+        logger.error(f"❌ Fichier vide ou invalide: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"❌ Erreur inattendue lors du prétraitement: {e}", exc_info=True)
+        raise ValueError(f"Erreur prétraitement: {str(e)}")
 
 # =========================
 # INFERENCE FUNCTION
@@ -326,14 +356,36 @@ def predict():
 
         # ===== SAUVEGARDE TEMPORAIRE =====
         filename_safe = secure_filename(filename)
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename_safe)
+        # Ajouter timestamp pour éviter les collisions
+        import uuid
+        filename_unique = f"{uuid.uuid4().hex}_{filename_safe}"
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename_unique)
         
         file.save(filepath)
-        logger.info(f"✅ Image reçue: {filename_safe}")
+        file_size = os.path.getsize(filepath)
+        logger.info(f"✅ Fichier sauvegardé: {filename_unique} ({file_size} bytes)")
+        
+        # Vérifier que le fichier a bien été écrit
+        if file_size == 0:
+            logger.error("❌ Fichier vide après la sauvegarde")
+            return jsonify({
+                "error": "Fichier vide - impossible de traiter"
+            }), 400
         
         # ===== PRÉTRAITEMENT =====
-        img_array = preprocess_image(filepath)
-        logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}")
+        try:
+            img_array = preprocess_image(filepath)
+            logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}")
+        except ValueError as e:
+            logger.error(f"❌ Erreur prétraitement (ValueError): {e}")
+            return jsonify({
+                "error": f"Image invalide: {str(e)}"
+            }), 400
+        except Exception as e:
+            logger.error(f"❌ Erreur prétraitement (Exception): {e}")
+            return jsonify({
+                "error": f"Erreur traitement image: {str(e)}"
+            }), 500
         
         # ===== PRÉDICTION =====
         logger.info("🔮 Utilisation: model.h5 (Colab - 14 classes)")
