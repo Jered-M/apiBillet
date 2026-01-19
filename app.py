@@ -3,6 +3,7 @@ API FastAPI pour la reconnaissance de billets
 Utilise le modèle entraîné et applique la même préparation de données que le notebook
 """
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,22 +21,6 @@ IMG_HEIGHT = 224
 IMG_WIDTH = 224
 MODEL_SAVE_DIR = r"C:\Users\HP\Music\MLBillet"
 DATASET_PATH = r"C:\Users\HP\Pictures\ML\BillRecognition-API"
-
-# ============ INITIALISATION DE L'APP ============
-app = FastAPI(
-    title="API Reconnaissance de Billets",
-    description="Prédiction de billets avec le modèle EfficientNet/MobileNetV2",
-    version="1.0.0"
-)
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # ============ VARIABLES GLOBALES ============
 model = None
@@ -88,12 +73,35 @@ def load_model_and_labels():
         print(f"[ERREUR] Erreur lors du chargement du modèle: {e}")
         return False
 
-@app.on_event("startup")
-async def startup_event():
-    """Exécuté au démarrage de l'API"""
+# ============ LIFESPAN ============
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Gère le cycle de vie de l'application"""
+    # Startup
     print("[INFO] Démarrage de l'API...")
     if not load_model_and_labels():
         print("[ATTENTION] Le modèle n'a pas pu être chargé")
+    yield
+    # Shutdown
+    print("[INFO] Arrêt de l'API...")
+
+# ============ INITIALISATION DE L'APP ============
+app = FastAPI(
+    title="API Reconnaissance de Billets",
+    description="Prédiction de billets avec le modèle EfficientNet/MobileNetV2",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ============ FONCTIONS UTILITAIRES ============
 
