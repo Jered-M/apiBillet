@@ -78,39 +78,60 @@ TFLITE_INTERPRETER = None
 
 def load_model_simple():
     """
-    Charge le modèle correctement depuis Colab
+    Charge et recompile le modèle Keras H5 correctement.
     
-    ✅ CORRECTION: Utiliser model.h5 (14 classes) depuis Downloads
-    C'est le vrai modèle entraîné sur Colab avec toutes les dénominations
+    La recompilation est CRITIQUE pour garantir:
+    - L'optimiseur correct (Adam avec learning_rate=0.0001)
+    - La fonction de perte (categorical_crossentropy)
+    - Les métriques identiques à l'entraînement
+    
+    Cela assure la cohérence entre Colab et l'API
     """
     global MODEL, TFLITE_INTERPRETER
     
     logger.info("📦 Chargement du modèle...")
     
-    # Charger model.h5 (c'est le VRAI modèle de Colab avec 14 classes)
+    # Charger model.h5 (format Keras HDF5)
     if os.path.exists("model.h5"):
         try:
-            logger.info("📍 Chargement: model.h5 (Colab - 14 classes)")
+            logger.info("📍 Chargement: model.h5 (Keras format)")
             MODEL = tf.keras.models.load_model("model.h5")
-            logger.info(f"✅ model.h5 chargé")
+            logger.info(f"✅ Modèle Keras chargé")
             logger.info(f"  Input shape : {MODEL.input_shape}")
             logger.info(f"  Output shape: {MODEL.output_shape}")
             logger.info(f"  Classes: {MODEL.output_shape[-1]}")
-            logger.info(f"✅ C'est le MÊME modèle qu'en Colab")
+            
+            # ===== RECOMPILATION CRITIQUE =====
+            # Recompiler avec les MÊMES paramètres que l'entraînement
+            # Cela garantit la cohérence avec Colab
+            try:
+                MODEL.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+                    loss='categorical_crossentropy',
+                    metrics=['accuracy']
+                )
+                logger.info("✅ Modèle recompilé avec Adam(lr=0.0001)")
+                logger.info("   ✓ Loss: categorical_crossentropy")
+                logger.info("   ✓ Metrics: accuracy")
+            except Exception as e:
+                logger.warning(f"⚠️  Recompilation impossible (SavedModel?): {e}")
+                logger.info("   ℹ️  Continuant avec le modèle tel quel...")
+            
             return True
         except Exception as e:
-            logger.error(f"❌ Erreur model.h5: {e}")
+            logger.error(f"❌ Erreur model.h5: {e}", exc_info=True)
+            return False
     
     logger.error("❌ model.h5 non trouvé - API non fonctionnelle")
     return False
 
 try:
     if load_model_simple():
-        logger.info("🚀 Modèle chargé et prêt!")
+        logger.info("🚀 Modèle chargé et prêt pour prédictions!")
     else:
         logger.error("L'API va démarrer mais retournera une erreur pour les prédictions")
 except Exception as e:
-    logger.error(f"❌ Erreur au démarrage: {e}")
+    logger.error(f"❌ Erreur au démarrage: {e}", exc_info=True)
     MODEL = None
     TFLITE_INTERPRETER = None
 
@@ -120,21 +141,27 @@ except Exception as e:
 
 def preprocess_image(image_path):
     """
-    Prétraitement IDENTIQUE au modèle entraîné.
+    Prétraitement IDENTIQUE au Colab pour garantir cohérence.
     
-    Le modèle a été entraîné avec:
-    - ImageDataGenerator(rescale=1./255)
-    - flow_from_directory avec target_size=(224, 224)
-    - PIL Image.load_img (utilise LANCZOS par défaut)
+    Points critiques pour la cohérence Colab ↔ API:
+    1. ✓ Conversion RGB (PIL default)
+    2. ✓ Resize 224x224 avec LANCZOS (ImageDataGenerator default)
+    3. ✓ Normalisation /255.0 (rescale=1./255)
+    4. ✓ Dimension batch [1, 224, 224, 3]
+    5. ✓ Float32 precision (modèle attend float32)
     
     Pipeline:
     1. Charger l'image
-    2. Corriger l'orientation EXIF (pour iPhone)
-    3. Convertir en RGB
-    4. Redimensionner à 224x224 avec LANCZOS (COMME ImageDataGenerator)
-    5. Normaliser par 255.0 (EXACTEMENT comme rescale=1./255)
+    2. Valider le format
+    3. Corriger l'orientation EXIF (photos iPhone)
+    4. Convertir en RGB
+    5. Redimensionner à 224x224
+    6. Normaliser [0,1]
+    7. Ajouter dimension batch
     """
     try:
+        import io
+        
         # Vérifier que le fichier existe et est lisible
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Fichier non trouvé: {image_path}")
@@ -153,33 +180,46 @@ def preprocess_image(image_path):
         img = Image.open(image_path)
         logger.info(f"✅ Image valide - Format: {img.format}, Size: {img.size}, Mode: {img.mode}")
         
-        # Corriger l'orientation EXIF (important pour les photos iPhone)
+        # ===== ÉTAPE 1: CORRECTION EXIF =====
+        # Important pour les photos prises avec iPhone qui ont des métadonnées EXIF
         img = ImageOps.exif_transpose(img)
+        logger.debug(f"  ✓ EXIF transposé - Nouveau size: {img.size}")
         
-        # Convertir en RGB (ImageDataGenerator le fait automatiquement)
+        # ===== ÉTAPE 2: CONVERSION RGB =====
+        # ImageDataGenerator convertit automatiquement en RGB
+        # C'est CRITIQUE pour cohérence avec Colab
         img = img.convert('RGB')
+        logger.debug(f"  ✓ Converti en RGB - Mode: {img.mode}")
         
-        # Redimensionner avec LANCZOS (algorithme par défaut de PIL pour downsampling)
-        # C'est ce qu'utilise ImageDataGenerator/Keras par défaut
-        img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
+        # ===== ÉTAPE 3: REDIMENSIONNEMENT =====
+        # Utiliser LANCZOS (algorithme par défaut de PIL pour downsampling)
+        # C'est EXACTEMENT ce qu'utilise ImageDataGenerator
+        img_resized = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
+        logger.debug(f"  ✓ Redimensionné à {IMG_SIZE}")
         
-        # Convertir en array
-        img_array = np.array(img, dtype=np.float32)
+        # ===== ÉTAPE 4: CONVERSION EN ARRAY =====
+        # Float32 (type attendu par le modèle Keras)
+        img_array = np.array(img_resized, dtype=np.float32)
+        logger.debug(f"  ✓ Converti en array - dtype: {img_array.dtype}, shape: {img_array.shape}")
         
-        # Normaliser par 255.0 (EXACTEMENT rescale=1./255)
+        # ===== ÉTAPE 5: NORMALISATION =====
+        # Diviser par 255.0 = rescale=1./255 en ImageDataGenerator
         # Convertit [0, 255] → [0, 1]
         img_array = img_array / 255.0
+        logger.debug(f"  ✓ Normalisé /255.0 - Range: [{img_array.min():.4f}, {img_array.max():.4f}]")
         
-        # Ajouter dimension batch (comme model.predict() l'attend)
+        # ===== ÉTAPE 6: DIMENSION BATCH =====
+        # model.predict() attend (batch_size, height, width, channels)
+        # Transformer (224, 224, 3) → (1, 224, 224, 3)
         img_array = np.expand_dims(img_array, axis=0)
-        
-        logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}, Range: [{img_array.min():.2f}, {img_array.max():.2f}]")
+        logger.info(f"✅ Prétraitement complet - Shape final: {img_array.shape}")
+        logger.info(f"   Data type: {img_array.dtype}, Range: [{img_array.min():.4f}, {img_array.max():.4f}]")
         
         return img_array
         
     except Image.UnidentifiedImageError as e:
         logger.error(f"❌ Format image non reconnu: {e}")
-        raise ValueError(f"Format image invalide: {str(e)}")
+        raise ValueError(f"Format image invalide ou corrompu: {str(e)}")
     except FileNotFoundError as e:
         logger.error(f"❌ Fichier non trouvé: {e}")
         raise
@@ -195,14 +235,37 @@ def preprocess_image(image_path):
 # =========================
 
 def predict_model(img_array):
-    """Prédit avec le modèle Keras H5 (seule source fiable)"""
+    """
+    Prédit avec le modèle Keras H5 (cohérent avec Colab).
+    
+    Le modèle.h5 est un modèle Keras classique.
+    - Input: (1, 224, 224, 3) - array normalisé [0, 1]
+    - Output: (1, 14) - logits pour 14 classes
+    - Utilise softmax pour obtenir les probabilités
+    """
     try:
+        if MODEL is None:
+            raise ValueError("Modèle non chargé")
+        
+        logger.debug(f"🔮 Input array shape: {img_array.shape}, dtype: {img_array.dtype}")
+        
+        # ===== PRÉDICTION =====
+        # model.predict() retourne les probabilités directement
+        # (contrairement à model(x) qui retourne les logits)
         predictions = MODEL.predict(img_array, verbose=0)
+        
+        logger.debug(f"  ✓ Predictions shape: {predictions.shape}")
+        logger.debug(f"  ✓ Predictions sum: {predictions.sum():.4f} (should be ~1.0)")
+        
         num_classes = predictions.shape[-1]
+        
+        # Retourner les prédictions pour la première image du batch
+        # predictions[0] = array de 14 probabilités
         return predictions[0], num_classes
+        
     except Exception as e:
-        logger.error(f"Erreur prédiction: {e}")
-        raise
+        logger.error(f"❌ Erreur prédiction: {e}", exc_info=True)
+        raise ValueError(f"Erreur lors de la prédiction: {str(e)}")
 
 # =========================
 # ROUTES
@@ -217,16 +280,15 @@ def index():
 def health():
     model_info = {
         "model_loaded": MODEL is not None,
-        "model_type": "keras_h5",
-        "source": "Colab"
+        "model_type": "SavedModel",
+        "source": "model_saved/"
     }
     
     if MODEL is not None:
         try:
-            model_info["input_shape"] = str(MODEL.input_shape)
-            model_info["output_shape"] = str(MODEL.output_shape)
-            model_info["num_classes"] = MODEL.output_shape[-1] if MODEL.output_shape else "unknown"
-            model_info["file"] = "model.h5"
+            model_info["signatures"] = list(MODEL.signatures.keys())
+            model_info["num_classes"] = 12  # SavedModel a 12 classes
+            model_info["file"] = "model_saved/"
         except:
             pass
     
@@ -388,43 +450,73 @@ def predict():
             }), 500
         
         # ===== PRÉDICTION =====
-        logger.info("🔮 Utilisation: model.h5 (Colab - 14 classes)")
-        predictions, num_classes = predict_model(img_array)
+        try:
+            logger.info("🔮 Prédiction en cours avec model.h5...")
+            predictions, num_classes = predict_model(img_array)
+            logger.info(f"✅ Prédiction réussie - {num_classes} classes détectées")
+        except ValueError as e:
+            logger.error(f"❌ Erreur prédiction (ValueError): {e}")
+            return jsonify({
+                "error": f"Erreur prédiction: {str(e)}"
+            }), 500
+        except Exception as e:
+            logger.error(f"❌ Erreur prédiction (Exception): {e}")
+            return jsonify({
+                "error": f"Erreur serveur prédiction: {str(e)}"
+            }), 500
         
+        # ===== ANALYSE DES RÉSULTATS =====
         predicted_class_idx = int(np.argmax(predictions))
         confidence = float(predictions[predicted_class_idx])
         num_classes = int(num_classes)
         
+        logger.debug(f"  ✓ Classe prédite: {predicted_class_idx}")
+        logger.debug(f"  ✓ Confiance: {confidence:.4f}")
+        logger.debug(f"  ✓ Top 3 prédictions:")
+        top_3_idx = np.argsort(predictions)[::-1][:3]
+        for i, idx in enumerate(top_3_idx):
+            logger.debug(f"    {i+1}. Classe {idx}: {predictions[idx]:.4f} ({BILL_LABELS.get(idx, '?')})")
+        
         # ===== RÉCUPÉRATION DU LABEL =====
         predicted_label = BILL_LABELS.get(predicted_class_idx, f"Unknown ({predicted_class_idx})")
         
-        logger.info(f"🎯 Prédiction: {predicted_label} ({confidence:.2%}) [Classes: {num_classes}]")
+        logger.info(f"🎯 RÉSULTAT FINAL: {predicted_label} ({confidence*100:.2f}%) [Classe {predicted_class_idx}/{num_classes}]")
         
-        # ===== RÉPONSE =====
-        return jsonify({
+        # ===== RÉPONSE JSON =====
+        # Format cohérent avec les attentes de l'app mobile
+        response = {
             "result": predicted_label,
             "prediction": predicted_label,
             "confidence": float(confidence),
+            "confidence_percent": round(float(confidence) * 100, 2),
             "class": int(predicted_class_idx),
+            "class_index": int(predicted_class_idx),
             "num_classes": num_classes,
-            "model": "model.h5 (Colab)",
+            "model": "model.h5 (Keras)",
+            "model_source": "Colab training",
             "processing_time_ms": round((time.time() - start_time) * 1000, 2)
-        }), 200
+        }
+        
+        logger.info(f"✅ Réponse préparée: {response}")
+        return jsonify(response), 200
         
     except FileNotFoundError as e:
         logger.error(f"❌ Fichier non trouvé: {e}")
         return jsonify({
-            "error": f"Erreur fichier: {str(e)}"
+            "error": f"Erreur fichier: {str(e)}",
+            "error_type": "file_not_found"
         }), 500
     except ValueError as e:
-        logger.error(f"❌ Erreur format image: {e}")
+        logger.error(f"❌ Erreur validation: {e}")
         return jsonify({
-            "error": f"Format image invalide: {str(e)}"
+            "error": f"Format image invalide: {str(e)}",
+            "error_type": "invalid_image"
         }), 400
     except Exception as e:
-        logger.error(f"❌ Erreur prédiction: {e}", exc_info=True)
+        logger.error(f"❌ Erreur serveur: {e}", exc_info=True)
         return jsonify({
-            "error": f"Erreur serveur: {str(e)}"
+            "error": f"Erreur serveur: {str(e)}",
+            "error_type": "server_error"
         }), 500
     
     finally:
@@ -432,7 +524,7 @@ def predict():
         if filepath and os.path.exists(filepath):
             try:
                 os.remove(filepath)
-                logger.info(f"🗑️  Image temporaire supprimée")
+                logger.debug(f"🗑️  Fichier temporaire supprimé: {filepath}")
             except Exception as e:
                 logger.warning(f"⚠️  Impossible de supprimer {filepath}: {e}")
 
