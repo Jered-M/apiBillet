@@ -1,332 +1,397 @@
-"""
-API FastAPI pour la reconnaissance de billets
-Utilise le modèle entraîné et applique la même préparation de données que le notebook
-"""
-
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-import numpy as np
-from PIL import Image
-import tensorflow as tf
 import os
-import io
-from datetime import datetime
-import json
+import time
+import logging
+import numpy as np
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
+from PIL import Image, ImageOps
 
-# ============ CONFIGURATION ============
-IMG_HEIGHT = 224
-IMG_WIDTH = 224
-# Chemins relatifs pour la compatibilité avec les serveurs
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_SAVE_DIR = os.getenv("MODEL_SAVE_DIR", os.path.join(BASE_DIR, "model_saved"))
-LABELS_FILE = os.path.join(BASE_DIR, "test_bills", "labels.json")
-TFLITE_MODEL_PATH = os.path.join(BASE_DIR, "model (1).tflite")
+import tensorflow as tf
 
-# ============ VARIABLES GLOBALES ============
-interpreter = None
-input_details = None
-output_details = None
-class_labels = []
+# Support optionnel pour TFLite
+try:
+    import tensorflow.lite as tflite
+    HAS_TFLITE = True
+except:
+    HAS_TFLITE = False
 
-# ============ INITIALISATION ============
+# =========================
+# CONFIGURATION DU LOGGER
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-def load_model_and_labels():
-    """Charge le modèle TFLite et les labels au démarrage"""
-    global interpreter, input_details, output_details, class_labels
+# =========================
+# CONFIGURATION GLOBALE
+# =========================
+
+IMG_SIZE = (224, 224)
+UPLOAD_FOLDER = "uploads"
+MIN_CONFIDENCE = 0.50
+
+# Labels - ADAPTER AU MODÈLE RÉEL CHARGÉ
+# ✅ Le model.h5 a 14 classes (depuis Downloads)
+BILL_LABELS = {
+    0: "100 CDF",
+    1: "50 CDF",
+    2: "200 CDF",
+    3: "500 CDF",
+    4: "1000 CDF",
+    5: "5000 CDF",
+    6: "10000 CDF",
+    7: "20000 CDF",
+    8: "100 USD",
+    9: "5 USD",
+    10: "10 USD",
+    11: "50 USD",
+    12: "20 USD",    # ← Nouvelles classes
+    13: "1 USD",     # ← Nouvelles classes
+}
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# TensorFlow CPU safe
+tf.config.set_visible_devices([], "GPU")
+tf.config.threading.set_intra_op_parallelism_threads(2)
+tf.config.threading.set_inter_op_parallelism_threads(2)
+
+# =========================
+# FLASK APP
+# =========================
+
+app = Flask(__name__)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB max
+
+CORS(app)
+
+# =========================
+# LOAD MODEL
+# =========================
+
+MODEL = None
+TFLITE_INTERPRETER = None
+
+def load_model_simple():
+    """
+    Charge le modèle correctement depuis Colab
     
-    try:
-        # Charger les labels depuis le fichier JSON
-        if os.path.exists(LABELS_FILE):
-            with open(LABELS_FILE, 'r') as f:
-                labels_dict = json.load(f)
-                # Extraire les labels uniques et les trier
-                class_labels = sorted(list(set(labels_dict.values())))
-                print(f"[OK] Classes chargées depuis JSON : {class_labels}")
-        else:
-            print(f"[ATTENTION] Fichier labels.json non trouvé: {LABELS_FILE}")
-            class_labels = []
-        
-        # Charger le modèle TFLite
-        if os.path.exists(TFLITE_MODEL_PATH):
-            interpreter = tf.lite.Interpreter(model_path=TFLITE_MODEL_PATH)
-            interpreter.allocate_tensors()
-            input_details = interpreter.get_input_details()
-            output_details = interpreter.get_output_details()
-            print(f"[OK] Modèle TFLite chargé avec succès: {os.path.basename(TFLITE_MODEL_PATH)}")
+    ✅ CORRECTION: Utiliser model.h5 (14 classes) depuis Downloads
+    C'est le vrai modèle entraîné sur Colab avec toutes les dénominations
+    """
+    global MODEL, TFLITE_INTERPRETER
+    
+    logger.info("📦 Chargement du modèle...")
+    
+    # Charger model.h5 (c'est le VRAI modèle de Colab avec 14 classes)
+    if os.path.exists("model.h5"):
+        try:
+            logger.info("📍 Chargement: model.h5 (Colab - 14 classes)")
+            MODEL = tf.keras.models.load_model("model.h5")
+            logger.info(f"✅ model.h5 chargé")
+            logger.info(f"  Input shape : {MODEL.input_shape}")
+            logger.info(f"  Output shape: {MODEL.output_shape}")
+            logger.info(f"  Classes: {MODEL.output_shape[-1]}")
+            logger.info(f"✅ C'est le MÊME modèle qu'en Colab")
             return True
-        else:
-            print(f"[ATTENTION] Fichier modèle TFLite non trouvé: {TFLITE_MODEL_PATH}")
-            print(f"[INFO] Fichier attendu: model (1).tflite")
-            return False
-        
-    except Exception as e:
-        print(f"[ERREUR] Erreur lors du chargement du modèle: {e}")
-        return False
+        except Exception as e:
+            logger.error(f"❌ Erreur model.h5: {e}")
+    
+    logger.error("❌ model.h5 non trouvé - API non fonctionnelle")
+    return False
 
-# ============ LIFESPAN ============
+try:
+    if load_model_simple():
+        logger.info("🚀 Modèle chargé et prêt!")
+    else:
+        logger.error("L'API va démarrer mais retournera une erreur pour les prédictions")
+except Exception as e:
+    logger.error(f"❌ Erreur au démarrage: {e}")
+    MODEL = None
+    TFLITE_INTERPRETER = None
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Gère le cycle de vie de l'application"""
-    # Startup
-    print("[INFO] Démarrage de l'API...")
-    if not load_model_and_labels():
-        print("[ATTENTION] Le modèle n'a pas pu être chargé")
-    yield
-    # Shutdown
-    print("[INFO] Arrêt de l'API...")
+# =========================
+# IMAGE PREPROCESS (COMPATIBLE MODEL)
+# =========================
 
-# ============ INITIALISATION DE L'APP ============
-app = FastAPI(
-    title="API Reconnaissance de Billets",
-    description="Prédiction de billets avec le modèle EfficientNet/MobileNetV2",
-    version="1.0.1",
-    lifespan=lifespan
-)
-
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ============ FONCTIONS UTILITAIRES ============
-
-def prepare_image(image_bytes) -> np.ndarray:
+def preprocess_image(image_path):
     """
-    Prépare l'image comme dans le notebook
+    Prétraitement IDENTIQUE au modèle entraîné.
     
-    Args:
-        image_bytes: Bytes de l'image
-        
-    Returns:
-        Array normalisé prêt pour la prédiction
+    Le modèle a été entraîné avec:
+    - ImageDataGenerator(rescale=1./255)
+    - flow_from_directory avec target_size=(224, 224)
+    - PIL Image.load_img (utilise LANCZOS par défaut)
+    
+    Pipeline:
+    1. Charger l'image
+    2. Corriger l'orientation EXIF (pour iPhone)
+    3. Convertir en RGB
+    4. Redimensionner à 224x224 avec LANCZOS (COMME ImageDataGenerator)
+    5. Normaliser par 255.0 (EXACTEMENT comme rescale=1./255)
     """
-    # Ouvrir l'image
-    img = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+    img = Image.open(image_path)
     
-    # Redimensionner
-    img_resized = img.resize((IMG_HEIGHT, IMG_WIDTH))
+    # Corriger l'orientation EXIF (important pour les photos iPhone)
+    img = ImageOps.exif_transpose(img)
     
-    # Normaliser les pixels entre 0 et 1
-    img_array = np.array(img_resized) / 255.0
+    # Convertir en RGB (ImageDataGenerator le fait automatiquement)
+    img = img.convert('RGB')
     
-    # Ajouter batch dimension
+    # Redimensionner avec LANCZOS (algorithme par défaut de PIL pour downsampling)
+    # C'est ce qu'utilise ImageDataGenerator/Keras par défaut
+    img = img.resize(IMG_SIZE, Image.Resampling.LANCZOS)
+    
+    # Convertir en array
+    img_array = np.array(img, dtype=np.float32)
+    
+    # Normaliser par 255.0 (EXACTEMENT rescale=1./255)
+    # Convertit [0, 255] → [0, 1]
+    img_array = img_array / 255.0
+    
+    # Ajouter dimension batch (comme model.predict() l'attend)
     img_array = np.expand_dims(img_array, axis=0)
+    
+    logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}, Range: [{img_array.min():.2f}, {img_array.max():.2f}]")
     
     return img_array
 
-def predict_image(image_array: np.ndarray) -> dict:
-    """
-    Effectue la prédiction avec le modèle TFLite
+# =========================
+# INFERENCE FUNCTION
+# =========================
+
+def predict_model(img_array):
+    """Prédit avec le modèle Keras H5 (seule source fiable)"""
+    try:
+        predictions = MODEL.predict(img_array, verbose=0)
+        num_classes = predictions.shape[-1]
+        return predictions[0], num_classes
+    except Exception as e:
+        logger.error(f"Erreur prédiction: {e}")
+        raise
+
+# =========================
+# ROUTES
+# =========================
+
+@app.route("/", methods=["GET"])
+def index():
+    return "Bill Recognition API running", 200
+
+
+@app.route("/health", methods=["GET"])
+def health():
+    model_info = {
+        "model_loaded": MODEL is not None,
+        "model_type": "keras_h5",
+        "source": "Colab"
+    }
     
-    Args:
-        image_array: Array d'image préparé
-        
-    Returns:
-        Dict avec prédiction et confiance
-    """
-    if interpreter is None:
-        raise RuntimeError("Modèle non chargé")
+    if MODEL is not None:
+        try:
+            model_info["input_shape"] = str(MODEL.input_shape)
+            model_info["output_shape"] = str(MODEL.output_shape)
+            model_info["num_classes"] = MODEL.output_shape[-1] if MODEL.output_shape else "unknown"
+            model_info["file"] = "model.h5"
+        except:
+            pass
     
-    # Convertir en float32 si nécessaire
-    if input_details[0]['dtype'] == np.float32:
-        image_array = image_array.astype(np.float32)
+    is_ready = MODEL is not None
+    return jsonify({
+        "status": "ok" if is_ready else "model_missing",
+        "model": model_info,
+        "port": 5000
+    }), 200 if is_ready else 503
+
+
+@app.route("/debug/upload", methods=["POST"])
+def debug_upload():
+    """Endpoint de debug pour tester les uploads"""
+    logger.info("🔍 DEBUG: Request reçue")
+    logger.info(f"  Content-Type: {request.content_type}")
+    logger.info(f"  Form keys: {list(request.form.keys())}")
+    logger.info(f"  Files keys: {list(request.files.keys())}")
+    logger.info(f"  Args keys: {list(request.args.keys())}")
+    
+    if "file" in request.files:
+        file = request.files["file"]
+        logger.info(f"  File name: {file.filename}")
+        logger.info(f"  File size: {len(file.read())} bytes")
+        file.seek(0)
+        return jsonify({
+            "debug": "File reçu avec succès",
+            "filename": file.filename,
+            "size": len(file.read())
+        }), 200
     else:
-        # Pour les modèles quantifiés (uint8)
-        image_array = (image_array * 255).astype(np.uint8)
-    
-    # Prédiction avec TFLite
-    interpreter.set_tensor(input_details[0]['index'], image_array)
-    interpreter.invoke()
-    
-    # Récupérer les résultats
-    predictions = interpreter.get_tensor(output_details[0]['index'])
-    
-    # Gérer les dimensions de sortie
-    if len(predictions.shape) > 1:
-        predictions = predictions[0]
-    
-    # Récupérer la classe prédite et la confiance
-    predicted_class_idx = np.argmax(predictions)
-    confidence = float(predictions[predicted_class_idx] * 100)
-    
-    # Récupérer le label
-    label = (
-        class_labels[predicted_class_idx] 
-        if predicted_class_idx < len(class_labels) 
-        else "Inconnu"
-    )
-    
-    # Toutes les prédictions avec scores
-    all_predictions = {
-        class_labels[i]: float(predictions[i] * 100)
-        for i in range(len(class_labels))
-    }
-    
-    return {
-        "classe_predite": label,
-        "confiance": round(confidence, 2),
-        "index": int(predicted_class_idx),
-        "toutes_predictions": all_predictions,
-        "timestamp": datetime.now().isoformat()
-    }
+        return jsonify({
+            "error": "Pas de fichier détecté",
+            "files_keys": list(request.files.keys()),
+            "content_type": request.content_type
+        }), 400
 
-# ============ ENDPOINTS ============
 
-@app.get("/")
-async def root():
-    """Endpoint racine - Info sur l'API"""
-    return {
-        "nom": "API Reconnaissance de Billets",
-        "version": "1.0.0",
-        "classes": class_labels,
-        "nb_classes": len(class_labels),
-        "endpoints": [
-            "/predict - POST - Prédire une image",
-            "/info - GET - Infos sur le modèle",
-            "/health - GET - Vérifier la santé de l'API"
-        ]
-    }
-
-@app.get("/info")
-async def info():
-    """Infos sur le modèle et les classes"""
-    if interpreter is None:
-        raise HTTPException(status_code=503, detail="Modèle non chargé")
+@app.route("/debug/save-raw", methods=["POST"])
+def debug_save_raw():
+    """Sauvegarde l'image brute SANS preprocessing pour test Colab"""
+    logger.info("💾 DEBUG: Sauvegarde image brute pour test")
     
-    return {
-        "statut": "[OK] Prêt",
-        "modele_charge": True,
-        "classes": class_labels,
-        "nb_classes": len(class_labels),
-        "img_hauteur": IMG_HEIGHT,
-        "img_largeur": IMG_WIDTH,
-        "model_path": TFLITE_MODEL_PATH,
-        "model_type": "TFLite"
-    }
-
-@app.get("/health")
-async def health():
-    """Vérifier la santé de l'API"""
-    return {
-        "statut": "[OK] Opérationnel",
-        "modele_charge": interpreter is not None,
-        "classes_disponibles": len(class_labels) > 0
-    }
-
-@app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    """
-    Prédire la classe d'une image
+    if "file" not in request.files:
+        return jsonify({"error": "Pas de fichier"}), 400
     
-    - **file**: Image à analyser (jpg, png, jpeg)
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "Nom vide"}), 400
     
-    Retourne:
-    - classe_predite: Label de la classe
-    - confiance: Confiance en %
-    - toutes_predictions: Scores pour chaque classe
-    """
-    
-    # Vérifier que le modèle est chargé
-    if interpreter is None:
-        raise HTTPException(status_code=503, detail="Modèle non chargé")
-    
-    # Vérifier le type de fichier
-    if not file.filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-        raise HTTPException(
-            status_code=400,
-            detail="Format fichier non supporté. Utilisez JPG, JPEG ou PNG"
-        )
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], f"raw_{filename}")
     
     try:
-        # Lire le fichier
-        image_bytes = await file.read()
-        
-        # Préparer l'image (même traitement que le notebook)
-        img_array = prepare_image(image_bytes)
-        
-        # Prédiction
-        result = predict_image(img_array)
-        
-        return result
-        
+        file.save(filepath)
+        logger.info(f"✅ Image brute sauvegardée: {filepath}")
+        return jsonify({
+            "message": "Image sauvegardée",
+            "path": filepath,
+            "instruction": "Télécharge cette image et teste dans Colab"
+        }), 200
     except Exception as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Erreur lors du traitement de l'image: {str(e)}"
-        )
+        logger.error(f"❌ Erreur: {e}")
+        return jsonify({"error": str(e)}), 500
 
-@app.post("/predict-batch")
-async def predict_batch(files: list[UploadFile] = File(...)):
+
+@app.route("/predict", methods=["POST"])
+def predict():
     """
-    Prédire plusieurs images à la fois
+    Endpoint de prédiction - Robuste avec validation complète
     
-    - **files**: Listes d'images à analyser
-    
-    Retourne:
-    - resultats: Liste des prédictions pour chaque image
+    Logique:
+    1. Valide la présence et le format du fichier
+    2. Prétraite (redimensionner 224x224, normaliser /255)
+    3. Prédit la classe
+    4. Retourne la classe et la confiance
     """
+    start_time = time.time()
+    filepath = None
     
-    if interpreter is None:
-        raise HTTPException(status_code=503, detail="Modèle non chargé")
-    
-    resultats = []
-    
-    for file in files:
-        try:
-            if not file.filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-                resultats.append({
-                    "filename": file.filename,
-                    "erreur": "Format non supporté"
-                })
-                continue
-            
-            # Lire et préparer
-            image_bytes = await file.read()
-            img_array = prepare_image(image_bytes)
-            
-            # Prédiction
-            result = predict_image(img_array)
-            result["filename"] = file.filename
-            
-            resultats.append(result)
-            
-        except Exception as e:
-            resultats.append({
-                "filename": file.filename,
-                "erreur": str(e)
-            })
-    
-    return {"nombre_images": len(files), "resultats": resultats}
+    try:
+        # ===== VALIDATION DU MODÈLE =====
+        if TFLITE_INTERPRETER is None and MODEL is None:
+            logger.error("❌ Aucun modèle disponible")
+            return jsonify({
+                "error": "Modèle non chargé",
+                "status": "model_missing"
+            }), 503
 
-# ============ GESTION DES ERREURS ============
+        # ===== VALIDATION DE LA REQUÊTE =====
+        logger.debug(f"🔍 Content-Type: {request.content_type}")
+        logger.debug(f"🔍 Files keys: {list(request.files.keys())}")
+        
+        if "file" not in request.files:
+            logger.warning("⚠️  Clé 'file' manquante dans request.files")
+            return jsonify({
+                "error": "Clé 'file' manquante. Utilisez: files={'file': open('image.jpg', 'rb')}",
+                "received_keys": list(request.files.keys()),
+                "content_type": request.content_type
+            }), 400
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
-    """Gestionnaire global des erreurs"""
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Erreur interne du serveur", "error": str(exc)}
-    )
+        file = request.files["file"]
+        
+        if file.filename == "":
+            logger.warning("⚠️  Filename vide")
+            return jsonify({
+                "error": "Filename vide - impossible de traiter"
+            }), 400
 
-# ============ LANCER L'APP ============
+        # ===== VALIDATION DE L'EXTENSION =====
+        filename = file.filename
+        if "." not in filename:
+            logger.warning(f"⚠️  Extension manquante: {filename}")
+            return jsonify({
+                "error": f"Extension manquante. Formats acceptés: jpg, jpeg, png, gif, bmp"
+            }), 400
+        
+        ext = filename.rsplit(".", 1)[-1].lower()
+        allowed_extensions = {"jpg", "jpeg", "png", "gif", "bmp"}
+        
+        if ext not in allowed_extensions:
+            logger.warning(f"⚠️  Format non supporté: {ext}")
+            return jsonify({
+                "error": f"Format '{ext}' non supporté",
+                "allowed_formats": list(allowed_extensions)
+            }), 400
+
+        # ===== SAUVEGARDE TEMPORAIRE =====
+        filename_safe = secure_filename(filename)
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename_safe)
+        
+        file.save(filepath)
+        logger.info(f"✅ Image reçue: {filename_safe}")
+        
+        # ===== PRÉTRAITEMENT =====
+        img_array = preprocess_image(filepath)
+        logger.info(f"✅ Image prétraitée - Shape: {img_array.shape}")
+        
+        # ===== PRÉDICTION =====
+        logger.info("🔮 Utilisation: model.h5 (Colab - 14 classes)")
+        predictions, num_classes = predict_model(img_array)
+        
+        predicted_class_idx = int(np.argmax(predictions))
+        confidence = float(predictions[predicted_class_idx])
+        num_classes = int(num_classes)
+        
+        # ===== RÉCUPÉRATION DU LABEL =====
+        predicted_label = BILL_LABELS.get(predicted_class_idx, f"Unknown ({predicted_class_idx})")
+        
+        logger.info(f"🎯 Prédiction: {predicted_label} ({confidence:.2%}) [Classes: {num_classes}]")
+        
+        # ===== RÉPONSE =====
+        return jsonify({
+            "result": predicted_label,
+            "prediction": predicted_label,
+            "confidence": float(confidence),
+            "class": int(predicted_class_idx),
+            "num_classes": num_classes,
+            "model": "model.h5 (Colab)",
+            "processing_time_ms": round((time.time() - start_time) * 1000, 2)
+        }), 200
+        
+    except FileNotFoundError as e:
+        logger.error(f"❌ Fichier non trouvé: {e}")
+        return jsonify({
+            "error": f"Erreur fichier: {str(e)}"
+        }), 500
+    except ValueError as e:
+        logger.error(f"❌ Erreur format image: {e}")
+        return jsonify({
+            "error": f"Format image invalide: {str(e)}"
+        }), 400
+    except Exception as e:
+        logger.error(f"❌ Erreur prédiction: {e}", exc_info=True)
+        return jsonify({
+            "error": f"Erreur serveur: {str(e)}"
+        }), 500
+    
+    finally:
+        # ===== NETTOYAGE =====
+        if filepath and os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+                logger.info(f"🗑️  Image temporaire supprimée")
+            except Exception as e:
+                logger.warning(f"⚠️  Impossible de supprimer {filepath}: {e}")
+
+# =========================
+# MAIN
+# =========================
 
 if __name__ == "__main__":
-    import uvicorn
-    
-    print("=" * 50)
-    print("[INFO] Lancement de l'API")
-    print("=" * 50)
-    
-    uvicorn.run(
-        app,
+    app.run(
         host="0.0.0.0",
-        port=8000,
-        log_level="info"
+        port=5000,
+        debug=False,
+        threaded=True
     )
