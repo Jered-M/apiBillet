@@ -19,7 +19,7 @@ import json
 IMG_HEIGHT = 224
 IMG_WIDTH = 224
 MODEL_SAVE_DIR = r"C:\Users\HP\Music\MLBillet"
-DATASET_PATH = r"D:\DATASET\DATASET_CONSOLIDÉ"
+DATASET_PATH = r"C:\Users\HP\Pictures\ML\BillRecognition-API"
 
 # ============ INITIALISATION DE L'APP ============
 app = FastAPI(
