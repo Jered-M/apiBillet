@@ -54,7 +54,7 @@ def load_model_and_labels():
                 d for d in os.listdir(DATASET_PATH) 
                 if os.path.isdir(os.path.join(DATASET_PATH, d))
             ])
-            print(f"✅ Classes détectées : {class_labels}")
+            print(f"[OK] Classes détectées : {class_labels}")
         else:
             raise FileNotFoundError(f"Dataset path non trouvé: {DATASET_PATH}")
         
@@ -81,19 +81,19 @@ def load_model_and_labels():
         
         # Charger le modèle
         model = load_model(model_path)
-        print(f"✅ Modèle chargé avec succès: {os.path.basename(model_path)}")
+        print(f"[OK] Modèle chargé avec succès: {os.path.basename(model_path)}")
         return True
         
     except Exception as e:
-        print(f"❌ Erreur lors du chargement du modèle: {e}")
+        print(f"[ERREUR] Erreur lors du chargement du modèle: {e}")
         return False
 
 @app.on_event("startup")
 async def startup_event():
     """Exécuté au démarrage de l'API"""
-    print("🚀 Démarrage de l'API...")
+    print("[INFO] Démarrage de l'API...")
     if not load_model_and_labels():
-        print("⚠️ Attention: Le modèle n'a pas pu être chargé")
+        print("[ATTENTION] Le modèle n'a pas pu être chargé")
 
 # ============ FONCTIONS UTILITAIRES ============
 
@@ -306,7 +306,7 @@ if __name__ == "__main__":
     import uvicorn
     
     print("=" * 50)
-    print("🚀 Lancement de l'API")
+    print("[INFO] Lancement de l'API")
     print("=" * 50)
     
     uvicorn.run(
