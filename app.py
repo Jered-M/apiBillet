@@ -9,6 +9,7 @@ from werkzeug.exceptions import ClientDisconnected
 from PIL import Image, ImageOps
 
 import tensorflow as tf
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 
 # Support optionnel pour TFLite
 try:
@@ -34,20 +35,22 @@ IMG_SIZE = (224, 224)
 UPLOAD_FOLDER = "uploads"
 MIN_CONFIDENCE = 0.50
 
-# Labels - 12 classes pour SavedModel
+# Labels - 14 classes pour MobileNetV2
 BILL_LABELS = {
-    0: "100 CDF",
-    1: "50 CDF",
-    2: "200 CDF",
-    3: "500 CDF",
+    0: "1 USD",
+    1: "10 USD",
+    2: "100 USD",
+    3: "10000 CDF",
     4: "1000 CDF",
-    5: "5000 CDF",
-    6: "10000 CDF",
+    5: "100 CDF",
+    6: "20 USD",
     7: "20000 CDF",
-    8: "100 USD",
+    8: "200 CDF",
     9: "5 USD",
-    10: "10 USD",
-    11: "20 USD",
+    10: "50 CDF",
+    11: "5000 CDF",
+    12: "500 CDF",
+    13: "50 CDF",
 }
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -139,22 +142,22 @@ except Exception as e:
 
 def preprocess_image(image_path):
     """
-    Prétraitement IDENTIQUE au Colab pour garantir cohérence.
-    
+    Prétraitement IDENTIQUE au Colab pour garantir cohérence avec MobileNetV2.
+
     Points critiques pour la cohérence Colab ↔ API:
     1. ✓ Conversion RGB (PIL default)
     2. ✓ Resize 224x224 avec LANCZOS (ImageDataGenerator default)
-    3. ✓ Normalisation /255.0 (rescale=1./255)
+    3. ✓ preprocess_input MobileNetV2 (normalise [-1, 1])
     4. ✓ Dimension batch [1, 224, 224, 3]
     5. ✓ Float32 precision (modèle attend float32)
-    
+
     Pipeline:
     1. Charger l'image
     2. Valider le format
     3. Corriger l'orientation EXIF (photos iPhone)
     4. Convertir en RGB
     5. Redimensionner à 224x224
-    6. Normaliser [0,1]
+    6. Appliquer preprocess_input MobileNetV2
     7. Ajouter dimension batch
     """
     try:
@@ -201,11 +204,11 @@ def preprocess_image(image_path):
         logger.debug(f"  ✓ Converti en array - dtype: {img_array.dtype}, shape: {img_array.shape}")
         
         # ===== ÉTAPE 5: NORMALISATION =====
-        # Diviser par 255.0 = rescale=1./255 en ImageDataGenerator
-        # Convertit [0, 255] → [0, 1]
-        img_array = img_array / 255.0
-        logger.debug(f"  ✓ Normalisé /255.0 - Range: [{img_array.min():.4f}, {img_array.max():.4f}]")
-        
+        # Appliquer preprocess_input MobileNetV2 (normalise [-1, 1])
+        # Convertit [0, 255] → [-1, 1] selon MobileNetV2
+        img_array = preprocess_input(img_array)
+        logger.debug(f"  ✓ preprocess_input MobileNetV2 appliqué - Range: [{img_array.min():.4f}, {img_array.max():.4f}]")
+
         # ===== ÉTAPE 6: DIMENSION BATCH =====
         # model.predict() attend (batch_size, height, width, channels)
         # Transformer (224, 224, 3) → (1, 224, 224, 3)
@@ -285,8 +288,8 @@ def health():
     if MODEL is not None:
         try:
             model_info["signatures"] = list(MODEL.signatures.keys())
-            model_info["num_classes"] = 12  # SavedModel a 12 classes
-            model_info["file"] = "model_saved/"
+            model_info["num_classes"] = 14  # MobileNetV2 a 14 classes
+            model_info["file"] = "model.h5"
         except:
             pass
     
