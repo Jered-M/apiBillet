@@ -5,6 +5,7 @@ import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import ClientDisconnected
 from PIL import Image, ImageOps
 
 import tensorflow as tf
@@ -33,8 +34,7 @@ IMG_SIZE = (224, 224)
 UPLOAD_FOLDER = "uploads"
 MIN_CONFIDENCE = 0.50
 
-# Labels - ADAPTER AU MODÈLE RÉEL CHARGÉ
-# ✅ Le model.h5 a 14 classes (depuis Downloads)
+# Labels - 12 classes pour SavedModel
 BILL_LABELS = {
     0: "100 CDF",
     1: "50 CDF",
@@ -47,9 +47,7 @@ BILL_LABELS = {
     8: "100 USD",
     9: "5 USD",
     10: "10 USD",
-    11: "50 USD",
-    12: "20 USD",    # ← Nouvelles classes
-    13: "1 USD",     # ← Nouvelles classes
+    11: "20 USD",
 }
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -380,17 +378,37 @@ def predict():
 
         # ===== VALIDATION DE LA REQUÊTE =====
         logger.debug(f"🔍 Content-Type: {request.content_type}")
-        logger.debug(f"🔍 Files keys: {list(request.files.keys())}")
+        try:
+            logger.debug(f"🔍 Files keys: {list(request.files.keys())}")
+        except ClientDisconnected:
+            logger.warning("⚠️  Client déconnecté lors du traitement de la requête")
+            return jsonify({
+                "error": "Client déconnecté - veuillez réessayer"
+            }), 400
+        
+        try:
+            files_keys = list(request.files.keys())
+        except ClientDisconnected:
+            logger.warning("⚠️  Client déconnecté lors de l'accès à request.files")
+            return jsonify({
+                "error": "Client déconnecté - veuillez réessayer"
+            }), 400
         
         if "file" not in request.files:
             logger.warning("⚠️  Clé 'file' manquante dans request.files")
             return jsonify({
                 "error": "Clé 'file' manquante. Utilisez: files={'file': open('image.jpg', 'rb')}",
-                "received_keys": list(request.files.keys()),
+                "received_keys": files_keys,
                 "content_type": request.content_type
             }), 400
 
-        file = request.files["file"]
+        try:
+            file = request.files["file"]
+        except ClientDisconnected:
+            logger.warning("⚠️  Client déconnecté lors de la récupération du fichier")
+            return jsonify({
+                "error": "Client déconnecté - veuillez réessayer"
+            }), 400
         
         if file.filename == "":
             logger.warning("⚠️  Filename vide")
